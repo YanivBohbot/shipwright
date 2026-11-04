@@ -215,6 +215,7 @@ class FakeSandbox:
         self.structured_exit = structured_exit
         self.handlers: list[tuple[str, dict[str, Any]]] = []
         self.executed: list[str] = []
+        self.deleted: list[str] = []
 
     @property
     def id(self) -> str:
@@ -279,6 +280,10 @@ class FakeSandbox:
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         return self.download_files(paths)
+
+    async def adelete(self, file_path: str) -> None:
+        self.deleted.append(file_path)
+        self.files.pop(file_path, None)
 
 
 @dataclass

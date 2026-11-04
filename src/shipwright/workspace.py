@@ -18,11 +18,13 @@ placeholders can never leak into the diff the human approves.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import ntpath
 import os
 import posixpath
 import re
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,13 +48,15 @@ BOT_EMAIL = "shipwright-bot@users.noreply.github.com"
 CLONE_TIMEOUT = 600
 TEST_TIMEOUT = 900
 OUTPUT_TAIL_LINES = 80
-CLEAN_ENV_KEYS = ("PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "TEMP")
+CLEAN_ENV_KEYS = ("PATH", "SYSTEMROOT", "TEMP")  # HOME/USERPROFILE are redirected
+SANDBOX_HOME = ".home"  # per-thread fake home inside the local workspace root
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _THREAD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _EXIT_RE = re.compile(r"\[Command [^\]]*exit code (-?\d+)\]|^Exit code: (-?\d+)$", re.MULTILINE)
 _SUMMARY_RE = re.compile(r"\b(\d+ (passed|failed|errors?)|no tests ran)\b")
-_DIFF_FLAGS = "--no-color --no-ext-diff --no-textconv --no-renames --binary"
+_DIFF_FLAGS = "--no-color --no-ext-diff --no-textconv --no-renames --binary --full-index"
 
 
 class WorkspaceError(RuntimeError):
@@ -81,9 +85,50 @@ def parse_exit_code(output: str) -> int:
     return int(last.group(1) or last.group(2))
 
 
-def clean_shell_env() -> dict[str, str]:
-    """Minimal environment for local shell commands: no Settings secret is ever visible."""
-    return {k: os.environ[k] for k in CLEAN_ENV_KEYS if k in os.environ}
+def _uv_env() -> dict[str, str]:
+    """Real uv cache / managed-Python dirs (no credentials) so `uv run` works with a fake HOME."""
+    env = os.environ
+    if os.name == "nt":
+        local = Path(env.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        roaming = Path(env.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        cache, python = local / "uv" / "cache", roaming / "uv" / "python"
+    else:
+        cache = Path(env.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "uv"
+        python = Path(env.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "uv" / "python"
+    return {
+        "UV_CACHE_DIR": env.get("UV_CACHE_DIR", str(cache)),
+        "UV_PYTHON_INSTALL_DIR": env.get("UV_PYTHON_INSTALL_DIR", str(python)),
+    }
+
+
+def clean_shell_env(workspace_root: Path) -> dict[str, str]:
+    """Minimal environment for local shell commands.
+
+    No Settings secret is visible, and the user's git/ssh credentials are not reachable by
+    default: HOME/USERPROFILE point to a per-thread dir under `workspace_root`, the global git
+    config is an empty file there, the system config (credential helpers) is disabled and git
+    never prompts. Not a sandbox boundary: `LocalShellBackend` is dev/tests/evals only.
+    """
+    home = (Path(workspace_root) / SANDBOX_HOME).resolve()
+    home.mkdir(parents=True, exist_ok=True)
+    gitconfig = home / ".gitconfig"
+    if not gitconfig.exists():
+        gitconfig.write_bytes(b"")
+    return {
+        **{k: os.environ[k] for k in CLEAN_ENV_KEYS if k in os.environ},
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "GIT_CONFIG_GLOBAL": str(gitconfig),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GCM_INTERACTIVE": "never",
+        **_uv_env(),
+    }
+
+
+def _validate_repo(repo: str) -> None:
+    if not _REPO_RE.match(repo) or any(part in (".", "..") for part in repo.split("/")):
+        raise WorkspaceError(f"Invalid repo (expected 'owner/name'): {repo!r}")
 
 
 def _q(arg: str) -> str:
@@ -122,6 +167,7 @@ class Workspace:
             clone_url: Override of `https://github.com/{repo}.git` (tests).
             skills_source: Local directory whose files are uploaded under `SKILLS_DIR`.
         """
+        _validate_repo(repo)
         self.backend = backend
         self.repo = repo
         self.shell_repo_dir = shell_repo_dir
@@ -149,12 +195,22 @@ class Workspace:
         return await self._exec(f"git -C {_q(self.shell_repo_dir)} {args}", timeout=timeout)
 
     async def _capture_git(self, args: str, name: str) -> bytes:
-        """Run git with stdout redirected to `STATE_DIR/name`; return the exact bytes."""
-        target = self._shell_join(self.shell_state_dir, name)
-        await self._git(f"{args} > {_q(target)}")
-        content = await self._download(f"{STATE_DIR}/{name}")
+        """Run git with stdout redirected to a unique file in `STATE_DIR`; return exact bytes.
+
+        The file name is unique per call (concurrent calls never share it) and the file is
+        removed after reading.
+        """
+        unique = f"{name}-{uuid.uuid4().hex}"
+        target = self._shell_join(self.shell_state_dir, unique)
+        virtual = f"{STATE_DIR}/{unique}"
+        try:
+            await self._git(f"{args} > {_q(target)}")
+            content = await self._download(virtual)
+        finally:
+            with contextlib.suppress(Exception):  # best effort: a leftover file is harmless
+                await self.backend.adelete(virtual)
         if content is None:
-            raise WorkspaceError(f"git output file {name} missing after: git {args}")
+            raise WorkspaceError(f"git output file {unique} missing after: git {args}")
         return content
 
     async def _download_many(self, paths: Sequence[str]) -> list[Any]:
@@ -247,12 +303,16 @@ class Workspace:
         )
         others_raw = await self._capture_git("ls-files --others --exclude-standard -z", "others")
 
+        try:
+            status_text, others_text = status_raw.decode("utf-8"), others_raw.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise WorkspaceError("A changed file path is not valid UTF-8") from e
         status: dict[str, str] = {}
-        fields = status_raw.decode("utf-8").split("\0")
+        fields = status_text.split("\0")
         for code, path in zip(fields[0::2], fields[1::2], strict=False):
             if code:
                 status[path] = code[0]
-        for path in others_raw.decode("utf-8").split("\0"):
+        for path in others_text.split("\0"):
             if path and not path.endswith("/"):  # trailing "/" = embedded repo, not a file
                 status.setdefault(path, "A")
 
@@ -313,12 +373,13 @@ async def open_workspace(
     """
     if not _THREAD_ID_RE.match(thread_id):
         raise ValueError(f"Unsafe thread_id for a workspace name: {thread_id!r}")
+    _validate_repo(repo)  # before any sandbox is created
 
     if settings.shipwright_sandbox_provider == "local":
         root = (Path(local_root or "tmp/shipwright") / thread_id).resolve()
         root.mkdir(parents=True, exist_ok=True)
         backend = LocalShellBackend(
-            root_dir=root, virtual_mode=True, env=clean_shell_env(), timeout=CLONE_TIMEOUT
+            root_dir=root, virtual_mode=True, env=clean_shell_env(root), timeout=CLONE_TIMEOUT
         )
         return Workspace(
             backend,

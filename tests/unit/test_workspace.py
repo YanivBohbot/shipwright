@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -130,7 +131,12 @@ async def test_diff_reads_redirected_file_and_hashes_it():
     assert await ws.diff_hash() == hashlib.sha256(patch).hexdigest()
     assert sb.count("add -N .") == 2
     diff_cmd = next(c for c in sb.executed if "diff --no-color" in c)
-    assert diff_cmd.endswith(f'{SHA} > "{STATE}/diff.patch"')
+    assert "--full-index" in diff_cmd
+    targets = re.findall(rf'{SHA} > "{STATE}/(diff\.patch-[0-9a-f]{{32}})"$', diff_cmd)
+    assert len(targets) == 1
+    # capture files are unique per call and removed after reading
+    assert len({d for d in sb.deleted if "diff.patch-" in d}) == 2
+    assert set(sb.files) == {f"{REPO_DIR}/.git/HEAD", BASE_SHA_FILE}
 
 
 async def test_diff_raises_when_git_fails():
@@ -205,8 +211,29 @@ async def test_open_workspace_local_uses_clean_env(tmp_path, monkeypatch):
     assert isinstance(ws.backend, LocalShellBackend)
     assert ws.shell_repo_dir == str(tmp_path / "t1" / "workspace" / "repo")
     env = ws.backend._env
-    assert set(env) <= {"PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "TEMP"}
-    assert "sk-should-not-leak" not in env.values()
+    assert set(env) <= {
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_TERMINAL_PROMPT",
+        "GCM_INTERACTIVE",
+        "UV_CACHE_DIR",
+        "UV_PYTHON_INSTALL_DIR",
+    }
+    values = " ".join(env.values())
+    assert "sk-should-not-leak" not in values
+    assert "ghp-should-not-leak" not in values
+    fake_home = str(tmp_path / "t1" / ".home")
+    assert env["HOME"] == env["USERPROFILE"] == fake_home
+    assert env["HOME"] != str(Path.home())
+    assert env["GIT_CONFIG_GLOBAL"] == str(Path(fake_home) / ".gitconfig")
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GCM_INTERACTIVE"] == "never"
 
 
 async def test_open_workspace_rejects_unsafe_thread_id(tmp_path):
@@ -271,7 +298,7 @@ async def real_ws(tmp_path):
     _git(parent, "init", "-q")
     root = parent / "ws"
     root.mkdir()
-    backend = LocalShellBackend(root_dir=root, env=clean_shell_env())
+    backend = LocalShellBackend(root_dir=root, env=clean_shell_env(root))
     ws = Workspace(
         backend,
         "acme/taskboard-api",
@@ -354,3 +381,29 @@ async def test_changed_files_consistent_with_diff_after_untracking(real_ws):
     _git(repo, "rm", "-q", "--cached", "app/a.py")  # file kept on disk, only untracked
     assert await ws.changed_files() == []
     assert await ws.diff() == ""
+
+
+@pytest.mark.parametrize("repo", ["evil repo", "a/b/c", 'a/b"', "../..", "a", "a/b;rm"])
+async def test_invalid_repo_is_rejected(repo):
+    with pytest.raises(WorkspaceError, match="Invalid repo"):
+        Workspace(FakeSandbox(), repo)
+    client = FakeSandboxClient()
+    with pytest.raises(WorkspaceError, match="Invalid repo"):
+        await open_workspace(settings_stub(), thread_id="t1", repo=repo, client=client)
+    assert client.created == []
+
+
+async def test_changed_files_rejects_non_utf8_paths():
+    sb = _cloned_sandbox().on("--name-status", redirect=b"M\x00app/\xff.py\x00")
+    with pytest.raises(WorkspaceError, match="not valid UTF-8"):
+        await _fake_ws(sb).changed_files()
+
+
+async def test_local_git_sees_no_user_global_or_system_config(real_ws):
+    ws, repo = real_ws
+    out = await ws._exec("git config --global --list")  # empty GIT_CONFIG_GLOBAL file
+    assert out.strip() in ("", "<no output>")
+    origins = await ws._git("config --show-origin --list")
+    assert str(Path.home() / ".gitconfig") not in origins
+    assert "credential.helper" not in origins
+    assert sorted(p.name for p in (repo.parent / ".shipwright").iterdir()) == ["base_sha"]
