@@ -24,7 +24,7 @@ def test_expected_outcomes():
     assert expected == {
         1: "pr",
         2: "pr",
-        3: "questions",
+        3: "pr",
         4: "questions",
         5: "draft_or_stop",
         6: "pr",
@@ -45,6 +45,8 @@ def test_scenario_2_references_export_spec():
 def test_scenario_3_and_6_references():
     tickets = _by_scenario()
     assert "ADR-002" in extract_spec_refs(tickets[3].description)
+    assert len(extract_acceptance_criteria(tickets[3].description)) == 3
+    assert "RFC 9110" in tickets[3].description
     assert "HEALTH-v1" in extract_spec_refs(tickets[6].description)
     assert len(extract_acceptance_criteria(tickets[6].description)) == 5
 
@@ -124,4 +126,16 @@ async def test_seed_only_creates_missing(tmp_path):
 
 
 def test_seed_script_exposes_main():
-    assert (ROOT / "scripts" / "seed_jira.py").exists()
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("seed_jira", ROOT / "scripts" / "seed_jira.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert callable(module.main)
+
+
+async def test_seed_corrupt_file_raises_clear_error(tmp_path):
+    path = tmp_path / "seeded.json"
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="seeded.json"):
+        await seed_demo_tickets(FakeJiraGateway(), "SHIP", load_demo_tickets(), path)

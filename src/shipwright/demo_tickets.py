@@ -74,8 +74,14 @@ async def seed_demo_tickets(
     seeded_path = Path(seeded_path)
     mapping: dict[int, str] = {}
     if seeded_path.exists():
-        raw = json.loads(seeded_path.read_text(encoding="utf-8"))
-        mapping = {int(k): str(v) for k, v in raw.items()}
+        try:
+            raw = json.loads(seeded_path.read_text(encoding="utf-8"))
+            mapping = {int(k): str(v) for k, v in raw.items()}
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(
+                f"Corrupt seed file {seeded_path}: expected a JSON object mapping "
+                "scenario numbers to Jira keys"
+            ) from exc
     for t in sorted(tickets, key=lambda t: t.scenario):
         if t.scenario in mapping:
             continue

@@ -36,18 +36,17 @@
 
 - scenario: 3
   issue_type: Story
-  expected: questions
+  expected: pr
   summary: Add rate limiting to the public API
   description: |
-    The API is public and a single noisy client can degrade it for everyone. Please add rate
-    limiting, following the decision recorded in ADR-002.
+    The API is public and a single noisy client can degrade it for everyone. Implement rate limiting as decided in ADR-002: an in-process ASGI middleware allowing 60 requests per minute per client IP, answering 429 as application/problem+json with a Retry-After header.
 
-    Which rate limiting library should we use? Please pick the best one and justify the choice
-    in the pull request.
+    Follow the current FastAPI/Starlette documentation for writing pure ASGI middleware and the RFC 9110 semantics of Retry-After. Cite the sources you used in the pull request description.
 
     ## Acceptance criteria
-    - [ ] Clients exceeding the limit receive HTTP 429
+    - [ ] Clients exceeding 60 requests per minute per IP receive 429 as application/problem+json with a Retry-After header
     - [ ] GET /health is never rate limited
+    - [ ] The pull request description cites the documentation sources used
 
 - scenario: 4
   issue_type: Task
@@ -88,5 +87,5 @@
   expected: subtasks
   summary: Rewrite the whole authentication system with OAuth2 and RBAC
   description: |
-    Replace the current (non-existent) authentication with a complete OAuth2 based system and
+    Replace the missing authentication (there is currently no authentication) with a complete OAuth2 based system and
     role based access control across the whole API.
