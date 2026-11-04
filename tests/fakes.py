@@ -8,6 +8,8 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 
 from shipwright.config import Settings
+from shipwright.integrations.github import FileChange
+from shipwright.tickets import Ticket, TicketNotFound
 
 _FAKE_VALUES = {
     "openai_api_key": "sk-fake-openai",
@@ -84,3 +86,102 @@ class FakeVectorStore(VectorStore):
         store = cls()
         store.add_texts(texts, metadatas)
         return store
+
+
+class FakeTool:
+    """Minimal async stand-in for a LangChain BaseTool: records ainvoke args, returns or raises.
+
+    `result` may be a value, or a callable taking the args dict and returning the value.
+    """
+
+    def __init__(
+        self, name: str = "fake_tool", result: Any = None, raises: Exception | None = None
+    ):
+        self.name = name
+        self.result = result
+        self.raises = raises
+        self.calls: list[dict[str, Any]] = []
+
+    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        self.calls.append(input)
+        if self.raises is not None:
+            raise self.raises
+        return self.result(input) if callable(self.result) else self.result
+
+
+class FakeJiraGateway:
+    """In-memory JiraGateway recording writes."""
+
+    def __init__(self, tickets: dict[str, Ticket] | None = None) -> None:
+        self.tickets = dict(tickets or {})
+        self.comments: list[tuple[str, str]] = []
+        self.transitions: list[tuple[str, str]] = []
+        self.subtasks: list[tuple[str, str, str]] = []
+        self.issues: list[tuple[str, str, str, str]] = []
+
+    async def get_issue(self, key: str) -> Ticket:
+        if key not in self.tickets:
+            raise TicketNotFound(key)
+        return self.tickets[key]
+
+    async def add_comment(self, key: str, body: str) -> str:
+        self.comments.append((key, body))
+        return str(len(self.comments))
+
+    async def transition(self, key: str, to_status: str) -> None:
+        self.transitions.append((key, to_status))
+
+    async def create_subtask(self, parent_key: str, summary: str, description: str) -> str:
+        self.subtasks.append((parent_key, summary, description))
+        return f"{parent_key.rsplit('-', 1)[0]}-{100 + len(self.subtasks)}"
+
+    async def create_issue(
+        self, project: str, summary: str, description: str, issue_type: str
+    ) -> str:
+        self.issues.append((project, summary, description, issue_type))
+        return f"{project}-{200 + len(self.issues)}"
+
+
+FAKE_PR_URL = "https://github.com/fake/repo/pull/1"
+
+
+class FakeGitHubGateway:
+    """In-memory GitHubGateway recording writes. `open_prs` maps head branch -> PR URL."""
+
+    def __init__(
+        self, existing_branches: Iterable[str] = (), open_prs: dict[str, str] | None = None
+    ) -> None:
+        self.existing_branches = set(existing_branches)
+        self.open_prs = dict(open_prs or {})
+        self.branches: list[tuple[str, str, str]] = []
+        self.pushes: list[tuple[str, str, list[FileChange], str]] = []
+        self.prs: list[dict[str, Any]] = []
+        self.pr_updates: list[tuple[str, str, str, str]] = []
+
+    async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None:
+        self.branches.append((repo, branch, from_branch))
+        self.existing_branches.add(branch)
+
+    async def push_files(
+        self, repo: str, branch: str, files: list[FileChange], message: str
+    ) -> str:
+        self.pushes.append((repo, branch, list(files), message))
+        return f"sha{len(self.pushes)}"
+
+    async def create_pull_request(
+        self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
+    ) -> str:
+        self.prs.append(
+            {"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft}
+        )
+        self.open_prs[head] = FAKE_PR_URL
+        return FAKE_PR_URL
+
+    async def branch_exists(self, repo: str, branch: str) -> bool:
+        return branch in self.existing_branches
+
+    async def find_open_pull_request(self, repo: str, head: str) -> str | None:
+        return self.open_prs.get(head)
+
+    async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None:
+        self.pr_updates.append((repo, pr_url, title, body))
