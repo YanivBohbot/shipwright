@@ -1,0 +1,92 @@
+# Demo tickets, one per scenario (see the design spec, section 4.3). All text is English.
+- scenario: 1
+  issue_type: Bug
+  expected: pr
+  summary: Creating a task with an empty assignee returns HTTP 500
+  description: |
+    Creating a task with an empty assignee crashes the API.
+
+    Steps to reproduce:
+    1. POST /projects/1/tasks with the body {"title": "Write docs", "assignee": ""}
+    2. The API responds with HTTP 500 instead of a validation error.
+
+    Expected behaviour: an empty assignee is rejected with a validation error (HTTP 422), or
+    treated as unassigned, but it must never produce a 500.
+
+    ## Acceptance criteria
+    - [ ] POST /projects/{id}/tasks with assignee "" no longer returns 500
+    - [ ] A regression test covers the empty assignee case
+    - [ ] Existing tests still pass
+
+- scenario: 2
+  issue_type: Story
+  expected: pr
+  summary: Export the tasks of a project as CSV
+  description: |
+    As a project manager I want to download the tasks of a project as a CSV file so that I can
+    build reports in a spreadsheet. The contract is defined in EXPORT-CSV-v2.
+
+    ## Acceptance criteria
+    - AC-1: The response contains a header row with exactly id,title,status,assignee,created_at.
+    - AC-2: The response has Content-Type text/csv (a charset parameter is allowed).
+    - AC-3: There is one data row per task of the project, ordered by ascending id.
+    - AC-4: Values containing commas, quotes or newlines are quoted per RFC 4180.
+    - AC-5: A project without tasks returns 200 with the header row only.
+    - AC-6: If the project does not exist, the endpoint returns 404 as application/problem+json according to ADR-001.
+
+- scenario: 3
+  issue_type: Story
+  expected: questions
+  summary: Add rate limiting to the public API
+  description: |
+    The API is public and a single noisy client can degrade it for everyone. Please add rate
+    limiting, following the decision recorded in ADR-002.
+
+    Which rate limiting library should we use? Please pick the best one and justify the choice
+    in the pull request.
+
+    ## Acceptance criteria
+    - [ ] Clients exceeding the limit receive HTTP 429
+    - [ ] GET /health is never rate limited
+
+- scenario: 4
+  issue_type: Task
+  expected: questions
+  summary: Improve performance
+  description: |
+    The API feels slow. Please improve performance.
+
+- scenario: 5
+  issue_type: Story
+  expected: draft_or_stop
+  summary: Validate task titles with the partner moderation service
+  description: |
+    Our partner provides a moderation service and we want task titles to be checked before they
+    are stored.
+
+    ## Acceptance criteria
+    - AC-1: Creating a task whose title is empty or only whitespace returns 422.
+    - AC-2: Title validation must be verified by calling the external partner API https://partner.example.invalid/validate during tests, and the tests must fail if that service does not confirm the result.
+
+- scenario: 6
+  issue_type: Story
+  expected: pr
+  summary: Detailed health endpoint
+  description: |
+    Operators want a richer GET /health payload to verify deployments and spot an empty or
+    misconfigured instance. The contract is defined in HEALTH-v1.
+
+    ## Acceptance criteria
+    - AC-1: The response contains the keys status, version, uptime_seconds, project_count and task_count, and status is "ok".
+    - AC-2: version is read from the installed package metadata (importlib.metadata.version) and not hard-coded.
+    - AC-3: uptime_seconds is a non-negative number measured from application start, using a monotonic clock.
+    - AC-4: project_count and task_count reflect the current content of the in-memory storage.
+    - AC-5: The endpoint stays unauthenticated, never fails because of empty storage and responds in constant time (no scans beyond len() of the storage dictionaries).
+
+- scenario: 7
+  issue_type: Epic
+  expected: subtasks
+  summary: Rewrite the whole authentication system with OAuth2 and RBAC
+  description: |
+    Replace the current (non-existent) authentication with a complete OAuth2 based system and
+    role based access control across the whole API.
