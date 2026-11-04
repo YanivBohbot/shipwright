@@ -156,7 +156,10 @@ class McpGitHubGateway:
                 return True
             if len(items) < _PAGE_SIZE:
                 return False
-        return False
+        raise RuntimeError(
+            f"branch_exists gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}; "
+            "cannot determine whether the branch exists"
+        )
 
     async def find_open_pull_request(self, repo: str, head: str) -> str | None:
         owner, name = _split_repo(repo)

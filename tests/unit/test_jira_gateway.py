@@ -97,3 +97,39 @@ async def test_missing_tool_is_explicit():
     gw = McpJiraGateway(tools={})
     with pytest.raises(KeyError, match="jira_add_comment"):
         await gw.add_comment("SHIP-1", "x")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Issue SHIP-404 not found.",
+        "Issue does not exist or you do not have permission to see it.",
+        "issue  does not exist",
+    ],
+)
+async def test_not_found_phrases(message):
+    key = "SHIP-404" if "SHIP-404" in message else "SHIP-1"
+    gw = McpJiraGateway(tools={"jira_get_issue": FakeTool(raises=ToolException(message))})
+    with pytest.raises(TicketNotFound):
+        await gw.get_issue(key)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "401 Unauthorized fetching SHIP-404",
+        "<html><title>404 Not Found</title></html>",
+        "Project not found",
+        "User not found",
+    ],
+)
+async def test_other_errors_are_not_ticket_not_found(message):
+    gw = McpJiraGateway(tools={"jira_get_issue": FakeTool(raises=ToolException(message))})
+    with pytest.raises(ToolException):
+        await gw.get_issue("SHIP-404")
+
+
+async def test_non_dict_result_is_runtime_error():
+    gw = McpJiraGateway(tools={"jira_get_issue": FakeTool(result="garbage text")})
+    with pytest.raises(RuntimeError, match="str"):
+        await gw.get_issue("SHIP-1")

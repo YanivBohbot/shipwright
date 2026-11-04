@@ -1,6 +1,7 @@
 """Jira gateway: a Protocol plus an implementation over the `mcp-atlassian` MCP tools."""
 
 import json
+import re
 from typing import Any, Protocol
 
 from langchain_core.tools import BaseTool
@@ -22,7 +23,15 @@ TOOL_CREATE_ISSUE = "jira_create_issue"
 
 SUBTASK_ISSUE_TYPE = "Subtask"  # mcp-atlassian: "use 'Subtask' (not 'Sub-task')"
 
-_NOT_FOUND_MARKERS = ("not found", "does not exist", "404", "no issue")
+# mcp-atlassian emits "Issue <KEY> not found."; Jira itself says "Issue does not exist or you do
+# not have permission to see it." Matched with the key removed, so a key like SHIP-404 or a
+# "Project/User not found" / generic HTTP 404 page is NOT treated as a missing ticket.
+_NOT_FOUND_RE = re.compile(r"\bissue\s+(?:not found|does not exist)\b", re.IGNORECASE)
+
+
+def _is_issue_not_found(exc: Exception, key: str) -> bool:
+    text = re.sub(re.escape(key), "", str(exc), flags=re.IGNORECASE)
+    return bool(_NOT_FOUND_RE.search(re.sub(r"\s+", " ", text)))
 
 
 class JiraGateway(Protocol):
@@ -56,11 +65,13 @@ class McpJiraGateway:
         except KeyError:
             raise
         except Exception as exc:
-            if any(m in str(exc).lower() for m in _NOT_FOUND_MARKERS):
+            if _is_issue_not_found(exc, key):
                 raise TicketNotFound(key) from exc
             raise
         if not isinstance(data, dict):
-            raise TicketNotFound(key)
+            raise RuntimeError(
+                f"Unexpected result type from {TOOL_GET_ISSUE}: {type(data).__name__}"
+            )
         description = data.get("description") or ""
         return Ticket(
             key=str(data.get("key") or key),

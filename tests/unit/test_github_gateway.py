@@ -142,3 +142,12 @@ async def test_fakes_behave_like_gateways():
     assert gh.pr_updates == [(REPO, url, "t2", "b2")]
     jira = FakeJiraGateway({})
     assert await jira.create_issue("SHIP", "s", "d", "Bug") == "SHIP-201"
+
+
+async def test_branch_exists_raises_when_too_many_branches():
+    tool = FakeTool(
+        result=lambda a: json.dumps([{"name": f"b{a['page']}-{i}"} for i in range(100)])
+    )
+    gw = McpGitHubGateway(tools={"list_branches": tool})
+    with pytest.raises(RuntimeError):
+        await gw.branch_exists(REPO, "missing")

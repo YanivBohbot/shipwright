@@ -41,6 +41,9 @@ async def test_load_mcp_tools_wraps_connection_error(monkeypatch):
         await load_mcp_tools(settings_stub())
     assert "github" in str(ei.value)
     assert "GITHUB_PAT" in str(ei.value)
+    for secret in ("ghp_fake", "jira-fake"):
+        assert secret not in str(ei.value)
+        assert secret not in str(ei.value.__cause__)
 
 
 async def test_load_mcp_tools_groups_by_server(monkeypatch):
