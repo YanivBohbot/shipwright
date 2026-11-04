@@ -1,8 +1,15 @@
 """Reusable test doubles (no network)."""
 
-from collections.abc import Iterable
+import re
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
+from deepagents.backends.protocol import (
+    ExecuteResponse,
+    FileDownloadResponse,
+    FileUploadResponse,
+)
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
@@ -185,3 +192,118 @@ class FakeGitHubGateway:
 
     async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None:
         self.pr_updates.append((repo, pr_url, title, body))
+
+
+_REDIRECT_RE = re.compile(r'>\s*"([^"]+)"\s*$')
+
+
+class FakeSandbox:
+    """In-memory sandbox backend: a dict of files plus a table `command pattern -> response`.
+
+    Mimics a LangSmith sandbox (POSIX paths, shell paths == virtual paths). Each handler is
+    matched by substring against the executed command (first match wins). When a matched
+    command ends with a `> "<path>"` redirect, `redirect` bytes are written to that path.
+    `effect(sandbox)` runs side effects (e.g. a clone creating `.git/HEAD`). Unmatched commands
+    succeed with empty output. With `structured_exit=False` the exit code is only reported in
+    the output as `[Command ... exit code N]` (exercises the parse fallback).
+    """
+
+    def __init__(
+        self, files: dict[str, bytes] | None = None, *, structured_exit: bool = True
+    ) -> None:
+        self.files: dict[str, bytes] = dict(files or {})
+        self.structured_exit = structured_exit
+        self.handlers: list[tuple[str, dict[str, Any]]] = []
+        self.executed: list[str] = []
+
+    @property
+    def id(self) -> str:
+        return "fake-sandbox"
+
+    def on(
+        self,
+        pattern: str,
+        *,
+        output: str = "",
+        exit_code: int = 0,
+        redirect: bytes = b"",
+        effect: Callable[["FakeSandbox"], None] | None = None,
+    ) -> "FakeSandbox":
+        self.handlers.append(
+            (
+                pattern,
+                {"output": output, "exit_code": exit_code, "redirect": redirect, "effect": effect},
+            )
+        )
+        return self
+
+    def count(self, pattern: str) -> int:
+        return sum(pattern in c for c in self.executed)
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        self.executed.append(command)
+        spec = next((h for p, h in self.handlers if p in command), None) or {
+            "output": "",
+            "exit_code": 0,
+            "redirect": b"",
+            "effect": None,
+        }
+        if spec["effect"] is not None:
+            spec["effect"](self)
+        if (m := _REDIRECT_RE.search(command)) is not None and spec["exit_code"] == 0:
+            self.files[m.group(1)] = spec["redirect"]
+        output, code = spec["output"], spec["exit_code"]
+        if self.structured_exit:
+            return ExecuteResponse(output=output, exit_code=code)
+        verdict = "succeeded" if code == 0 else "failed"
+        return ExecuteResponse(output=f"{output}\n[Command {verdict} with exit code {code}]")
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        return self.execute(command, timeout=timeout)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        for path, content in files:
+            self.files[path] = content
+        return [FileUploadResponse(path=p, error=None) for p, _ in files]
+
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return self.upload_files(files)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return [
+            FileDownloadResponse(path=p, content=self.files[p], error=None)
+            if p in self.files
+            else FileDownloadResponse(path=p, content=None, error="file_not_found")
+            for p in paths
+        ]
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return self.download_files(paths)
+
+
+@dataclass
+class FakeSandboxInfo:
+    name: str
+    status: str = "ready"
+
+
+class FakeSandboxClient:
+    """Stand-in for `langsmith.sandbox.SandboxClient` (sync API), recording calls."""
+
+    def __init__(self, sandboxes: Iterable[FakeSandboxInfo] = ()) -> None:
+        self.sandboxes = list(sandboxes)
+        self.created: list[dict[str, Any]] = []
+        self.deleted: list[str] = []
+
+    def list_sandboxes(self) -> list[FakeSandboxInfo]:
+        return list(self.sandboxes)
+
+    def create_sandbox(self, *, name: str, idle_ttl_seconds: int | None = None, **kwargs: Any):
+        self.created.append({"name": name, "idle_ttl_seconds": idle_ttl_seconds, **kwargs})
+        sandbox = FakeSandboxInfo(name=name)
+        self.sandboxes.append(sandbox)
+        return sandbox
+
+    def delete_sandbox(self, name: str) -> None:
+        self.deleted.append(name)
+        self.sandboxes = [s for s in self.sandboxes if s.name != name]
