@@ -1,0 +1,58 @@
+[project]
+name = "shipwright"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Yaniv Bohbot", email = "yanivbohbot5@gmail.com" }
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "deepagents>=0.7.3",
+    "fpdf2>=2.9.0",
+    "langchain>=1.4.9",
+    "langchain-mcp-adapters>=0.3.2",
+    "langchain-openai>=1.7.4",
+    "langchain-pinecone>=0.2.13",
+    "langchain-tavily>=0.2.18",
+    "langchain-text-splitters>=1.1.3",
+    "langgraph>=1.2.19",
+    "langgraph-checkpoint-mongodb>=0.5.1",
+    "langgraph-store-mongodb>=0.4.0",
+    "langsmith>=0.14.17",
+    "llama-cloud-services>=0.6.94",
+    "mcp-atlassian>=0.23.1",
+    "pydantic-settings>=2.16.2",
+    "pymongo>=4.19.0",
+    "pyyaml>=6.0.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "langgraph-cli[inmem]>=0.4.40",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "ruff>=0.17.3",
+]
+
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "llm: tests that call a real LLM (excluded by default)",
+    "live: tests that hit live external services (excluded by default)",
+]
+addopts = "-m 'not llm and not live'"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
