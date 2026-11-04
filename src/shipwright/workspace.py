@@ -184,7 +184,13 @@ class Workspace:
         moves the diff base past commits made by the developer.
         """
         cloned = False
-        if await self._download(f"{REPO_DIR}/.git/HEAD") is None:
+        if await self._download(f"{REPO_DIR}/.git/HEAD") is not None:
+            if await self._download(BASE_SHA_FILE) is None:
+                raise WorkspaceError(
+                    "Workspace corrupt: repo exists but no base sha was recorded "
+                    f"({BASE_SHA_FILE}); delete the workspace/sandbox and retry."
+                )
+        else:
             await self._exec(
                 "git clone --depth 50 --config core.autocrlf=false "
                 f"{_q(self.clone_url)} {_q(self.shell_repo_dir)}",
@@ -216,15 +222,18 @@ class Workspace:
             raise WorkspaceError(f"No valid base sha recorded at {BASE_SHA_FILE}")
         return sha
 
-    async def diff(self) -> str:
-        """Full diff vs the base SHA: committed + uncommitted + new (untracked) files."""
+    async def _diff_bytes(self) -> bytes:
         sha = await self.base_sha()
         await self._git("add -N .")
-        raw = await self._capture_git(f"diff {_DIFF_FLAGS} {sha}", "diff.patch")
-        return raw.decode("utf-8", errors="replace")
+        return await self._capture_git(f"diff {_DIFF_FLAGS} {sha}", "diff.patch")
+
+    async def diff(self) -> str:
+        """Full diff vs the base SHA: committed + uncommitted + new (untracked) files."""
+        return (await self._diff_bytes()).decode("utf-8", errors="replace")
 
     async def diff_hash(self) -> str:
-        return hashlib.sha256((await self.diff()).encode("utf-8")).hexdigest()
+        """sha256 hex of the exact diff bytes git produced."""
+        return hashlib.sha256(await self._diff_bytes()).hexdigest()
 
     async def changed_files(self) -> list[FileChange]:
         """Individual changed files vs the base SHA (ignored files excluded), sorted by path.
@@ -232,6 +241,7 @@ class Workspace:
         Renames appear as delete + add. Deleted files have `content=None`.
         """
         sha = await self.base_sha()
+        await self._git("add -N .")  # same index state as diff(), whatever ran before
         status_raw = await self._capture_git(
             f"diff --name-status --no-renames -z {sha}", "name_status"
         )

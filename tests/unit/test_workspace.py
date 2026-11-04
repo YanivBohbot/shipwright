@@ -85,6 +85,13 @@ async def test_ensure_cloned_raises_on_clone_failure():
         await _fake_ws(sb).ensure_cloned()
 
 
+async def test_ensure_cloned_reports_corrupt_workspace_without_base_sha():
+    sb = FakeSandbox({f"{REPO_DIR}/.git/HEAD": b"ref: refs/heads/main\n"})
+    with pytest.raises(WorkspaceError, match="corrupt"):
+        await _fake_ws(sb).ensure_cloned()
+    assert sb.count("git clone") == 0
+
+
 async def test_base_sha_rejects_garbage():
     sb = FakeSandbox({BASE_SHA_FILE: b"not-a-sha"})
     with pytest.raises(WorkspaceError):
@@ -340,3 +347,10 @@ async def test_diff_survives_developer_commit(real_ws):
     assert await rebuilt.changed_files() == [
         FileChange(path="app/a.py", content="print('a')\nprint('more')\n")
     ]
+
+
+async def test_changed_files_consistent_with_diff_after_untracking(real_ws):
+    ws, repo = real_ws
+    _git(repo, "rm", "-q", "--cached", "app/a.py")  # file kept on disk, only untracked
+    assert await ws.changed_files() == []
+    assert await ws.diff() == ""
