@@ -18,6 +18,7 @@ from typing import Any, Literal, Protocol
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
+from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
 from pymongo import AsyncMongoClient
 
@@ -112,7 +113,15 @@ def _preview(result: Any) -> str:
 
 
 class AuditMiddleware(AgentMiddleware):
-    """Records every call to a tool in `AUDITED_TOOLS`. Never fails the call itself."""
+    """Records every call to a tool in `AUDITED_TOOLS`. Never fails the call itself.
+
+    Graph pauses (`GraphBubbleUp`, e.g. `interrupt()` in `request_human_review`) are re-raised
+    without recording: only the final outcome after resume is logged.
+
+    The sync `wrap_tool_call` path is best-effort: with no running loop it uses `asyncio.run`
+    (a loop-bound Mongo client may then fail, which is logged as a warning); inside a running
+    loop the record is scheduled as a task and may be lost if the loop closes first.
+    """
 
     def __init__(self, sink: AuditSink) -> None:
         super().__init__()
@@ -167,6 +176,8 @@ class AuditMiddleware(AgentMiddleware):
             return await handler(request)
         try:
             result = await handler(request)
+        except GraphBubbleUp:
+            raise  # interrupt()/pause: not a failure; the tool re-runs on resume
         except Exception as exc:
             await self._arecord(
                 self._event(request, "error", _preview(f"{type(exc).__name__}: {exc}"))
@@ -184,6 +195,8 @@ class AuditMiddleware(AgentMiddleware):
             return handler(request)
         try:
             result = handler(request)
+        except GraphBubbleUp:
+            raise
         except Exception as exc:
             self._record_sync(
                 self._event(request, "error", _preview(f"{type(exc).__name__}: {exc}"))

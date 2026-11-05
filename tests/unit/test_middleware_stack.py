@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import httpx
 import openai
 import pytest
@@ -10,7 +12,7 @@ from langchain.agents.middleware import (
 )
 from langchain.agents.middleware._redaction import PIIDetectionError
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from shipwright.integrations.mcp_client import McpToolError
 from shipwright.middleware.audit import AuditMiddleware, MemoryAuditSink
@@ -115,3 +117,47 @@ def test_tool_retry_restricted_to_read_only_tools():
         "request_human_review",
     ):
         assert not tr._should_retry_tool(name)
+
+
+def _tool_request(name):
+    return SimpleNamespace(tool_call={"name": name, "args": {}, "id": "c1"}, tool=None)
+
+
+def test_tool_retry_retries_transient_on_read_only_tool(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    tr = _stack()[4]
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("down")
+        return ToolMessage(content="ok", tool_call_id="c1")
+
+    out = tr.wrap_tool_call(_tool_request("read_jira_ticket"), handler)
+    assert out.content == "ok"
+    assert len(calls) == 2
+
+
+def test_tool_retry_does_not_retry_mcp_error_or_write_tools(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    tr = _stack()[4]
+    calls = []
+
+    def mcp_fail(req):
+        calls.append(1)
+        raise McpToolError("read_jira_ticket", "bad")
+
+    with pytest.raises(McpToolError):
+        tr.wrap_tool_call(_tool_request("read_jira_ticket"), mcp_fail)
+    assert len(calls) == 1
+
+    calls.clear()
+
+    def net_fail(req):
+        calls.append(1)
+        raise httpx.ConnectError("down")
+
+    with pytest.raises(httpx.ConnectError):
+        tr.wrap_tool_call(_tool_request("publish_pull_request"), net_fail)
+    assert len(calls) == 1

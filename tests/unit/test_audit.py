@@ -175,3 +175,29 @@ def test_mongo_sink_is_lazy(monkeypatch):
     assert created == []
     assert sink.collection is not None
     assert created == ["mongodb://x"]
+
+
+async def test_graph_interrupt_is_not_recorded_then_ok_once():
+    from langgraph.errors import GraphInterrupt
+
+    sink = MemoryAuditSink()
+    mw = AuditMiddleware(sink)
+
+    async def pausing(req):
+        raise GraphInterrupt()
+
+    with pytest.raises(GraphInterrupt):
+        await mw.awrap_tool_call(_request("request_human_review"), pausing)
+    assert sink.events == []
+
+    with pytest.raises(GraphInterrupt):
+        mw.wrap_tool_call(
+            _request("request_human_review"), lambda r: (_ for _ in ()).throw(GraphInterrupt())
+        )
+    assert sink.events == []
+
+    async def done(req):
+        return ToolMessage(content="approved", tool_call_id="c1")
+
+    await mw.awrap_tool_call(_request("request_human_review"), done)
+    assert [e.outcome for e in sink.events] == ["ok"]
