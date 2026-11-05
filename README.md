@@ -61,7 +61,7 @@ and stop) -> size gate (too big: propose sub-tickets and stop) -> plan with `wri
 | Human-in-the-loop | `interrupt_on` on every GitHub/Jira write + custom `review_gate` interrupt | `tools/__init__.py`, `tools/review_gate.py` |
 | Middleware | PII redaction / GitHub-token block, model-call limit, retries, model fallback, audit trail, policy seeding | `middleware/stack.py`, `audit.py`, `policy_seed.py` |
 | Memory | `/memories/preferences.md` per user (reusable review feedback) | `backends.py`, orchestrator prompt |
-| Context schema | `user_id`, `jira_project` | `context.py` |
+| Context schema | `user_id` (the Jira project comes from `JIRA_PROJECT`) | `context.py` |
 | Durability | MongoDB checkpointer + store (CLI); `checkpointer.backend = mongo` in `langgraph.json` (deployment) | `persistence.py`, `langgraph.json` |
 | Observability | LangSmith tracing (`LANGSMITH_TRACING`, `LANGSMITH_PROJECT`) | `.env` |
 | Evaluation | offline LangSmith experiment over 7 scenarios | `evals/`, `src/shipwright/evaluation/` |

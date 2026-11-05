@@ -117,7 +117,7 @@ async def test_scenario_1_bugfix_reaches_review_gate(tmp_path):
     await seed_policies(store, settings)
     graph = build_agent(settings, deps, workspace, checkpointer=InMemorySaver(), store=store)
     config = {"configurable": {"thread_id": f"it-{uuid.uuid4().hex[:8]}"}}
-    context = ShipwrightContext(user_id="alice", jira_project=settings.jira_project)
+    context = ShipwrightContext(user_id="alice")
 
     run_input: Any = {"messages": [{"role": "user", "content": "Process Jira ticket SHIP-1."}]}
     seen: list[str] = []

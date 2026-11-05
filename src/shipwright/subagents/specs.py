@@ -58,7 +58,7 @@ def build_subagents(
                 "Delegate ONLY when the ticket references a spec/ADR (e.g. EXPORT-CSV-v2, "
                 "ADR-002) or needs external library/standard knowledge. Do NOT use it for "
                 "questions about the repository code (use code_analyst) or for simple tickets "
-                "that need no outside context. Returns cited facts, has no code access."
+                "that need no outside context. Returns cited facts (read-only: never edits code)."
             ),
             "system_prompt": load_prompt("researcher", **values),
             "model": settings.model_light,

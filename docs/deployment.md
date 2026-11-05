@@ -77,7 +77,7 @@ Other useful flags of `deploy`: `--deployment-id` (update an existing deployment
 ## Verification after deploying (live checklist)
 
 1. Open the deployment in Studio, create a thread, send `Process Jira ticket SHIP-<n>.` with a
-   `user_id` in the run context (`{"user_id": "demo", "jira_project": "SHIP"}`).
+   `user_id` in the run context (`{"user_id": "demo"}`; the Jira project comes from `JIRA_PROJECT`).
 2. Replay scenario 2 as in `docs/demo-guide.md`; expected: PR on the demo repo, Jira comment and
    `In Review`.
 3. In Atlas, check the checkpointer collections receive documents (the langgraph-checkpoint-mongodb defaults are `checkpoints` and `checkpoint_writes`; the Agent Server may use its own names or database, so also look at the database in `LS_MONGODB_URI`) and that `audit_log` in `MONGODB_DB`

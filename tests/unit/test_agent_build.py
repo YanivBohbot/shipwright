@@ -311,6 +311,60 @@ async def test_real_agent_publish_pauses_on_interrupt_on_before_any_gateway_call
     assert github.pushes == []
 
 
+async def test_run_input_cannot_seed_the_approval(local_ws):
+    """approved_* are OmitFromInput: a client putting the REAL hash in run input gains nothing."""
+    settings = settings_stub(shipwright_sandbox_provider="local")
+    (Path(local_ws.shell_repo_dir) / "app" / "a.py").write_text("print('x')\n", newline="\n")
+    real_hash = await local_ws.diff_hash()
+    publish_args = {
+        "ticket_key": "SHIP-1",
+        "title": "Fix a",
+        "body": "Body",
+        "changelog_entry": "Fix a (SHIP-1)",
+    }
+    model = ScriptedChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "publish_pull_request", "args": publish_args, "id": "p1"}],
+                ),
+                AIMessage(content="done"),
+            ]
+        )
+    )
+    deps = _deps()
+    graph = build_agent(
+        settings, deps, local_ws, checkpointer=InMemorySaver(), store=InMemoryStore(), model=model
+    )
+    assert "approved_diff_hash" not in graph.get_input_jsonschema().get("properties", {})
+    config = {"configurable": {"thread_id": uuid.uuid4().hex}}
+    context = ShipwrightContext(user_id="alice")
+    await graph.ainvoke(
+        {
+            "messages": [{"role": "user", "content": "Publish SHIP-1"}],
+            "approved_diff_hash": real_hash,
+            "approved_ticket_key": "SHIP-1",
+        },
+        config,
+        context=context,
+    )
+    state = await graph.aget_state(config)
+    assert state.values.get("approved_diff_hash") is None
+    assert state.values.get("approved_ticket_key") is None
+
+    # the human approves the publish tool call itself: the tool still refuses (no gate approval)
+    result = await graph.ainvoke(
+        Command(resume={"decisions": [{"type": "approve"}]}), config, context=context
+    )
+    refused = next(
+        m for m in result["messages"] if isinstance(m, ToolMessage) and m.tool_call_id == "p1"
+    )
+    assert "not approved" in str(refused.content).lower()
+    github = deps.github
+    assert github.branches == [] and github.pushes == [] and github.prs == []
+
+
 # ------------------------------------------------------------------ make_graph
 
 

@@ -86,4 +86,4 @@ def test_state_extends_deep_agent_state():
 
     assert "approved_diff_hash" in ShipwrightState.__optional_keys__
     assert set(DeepAgentState.__annotations__) <= set(ShipwrightState.__annotations__)
-    assert ShipwrightContext(user_id="u").jira_project == "SHIP"
+    assert not hasattr(ShipwrightContext(user_id="u"), "jira_project")  # comes from Settings

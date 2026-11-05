@@ -290,7 +290,7 @@ async def run_ticket(args: argparse.Namespace) -> None:
         deps = await build_live_dependencies(settings)
         agent = build_agent(settings, deps, workspace, checkpointer=checkpointer, store=store)
         config = {"configurable": {"thread_id": thread}}
-        context = ShipwrightContext(user_id=args.user, jira_project=settings.jira_project)
+        context = ShipwrightContext(user_id=args.user)
         print(f"Shipwright: {key} | thread {thread} | user {args.user}")
 
         state = await agent.aget_state(config)

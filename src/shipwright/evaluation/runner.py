@@ -248,5 +248,5 @@ async def build_scenario_env(
         settings=settings,
         deps=deps,
         key=key,
-        context=ShipwrightContext(user_id=user_id, jira_project=settings.jira_project),
+        context=ShipwrightContext(user_id=user_id),
     )
