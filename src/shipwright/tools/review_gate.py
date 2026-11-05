@@ -121,7 +121,9 @@ def make_review_gate_tool(workspace: Workspace, jira_project: str = "SHIP") -> B
         try:
             diff, diff_hash = await workspace.diff_and_hash()
         except WorkspaceError as e:
-            return reply(f"Cannot review: the workspace is unavailable ({e}).")
+            # unreadable workspace OR unpublishable change set (symlink, mode change...): the
+            # error names the paths so the developer can fix them; nothing is approvable.
+            return reply(f"Cannot review: {e}. Nothing was approved.")
         if not diff.strip():
             return reply(NOTHING_TO_REVIEW)
 

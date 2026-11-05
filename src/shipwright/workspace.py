@@ -1,4 +1,4 @@
-"""Workspace sandbox: clone the target repo, compute the reviewed diff, run tests, ship skills.
+"""Workspace sandbox: clone the target repo, compute the reviewed diff, ship skills.
 
 Two path spaces coexist and must never be mixed:
 
@@ -43,12 +43,9 @@ STATE_DIR = "/workspace/.shipwright"  # = {REPO_DIR}/../.shipwright, outside the
 BASE_SHA_FILE = f"{STATE_DIR}/base_sha"
 
 DEFAULT_SKILLS_SOURCE = Path(__file__).parent / "skills"
-TEST_COMMAND = "pytest -q"  # demo repo's documented command: `uv run pytest -q`
 BOT_NAME = "Shipwright Bot"
 BOT_EMAIL = "shipwright-bot@users.noreply.github.com"
 CLONE_TIMEOUT = 600
-TEST_TIMEOUT = 900
-OUTPUT_TAIL_LINES = 80
 CLEAN_ENV_KEYS = ("PATH", "SYSTEMROOT", "TEMP")  # HOME/USERPROFILE are redirected
 SANDBOX_HOME = ".home"  # per-thread fake home inside the local workspace root
 
@@ -56,21 +53,66 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _THREAD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _EXIT_RE = re.compile(r"\[Command [^\]]*exit code (-?\d+)\]|^Exit code: (-?\d+)$", re.MULTILINE)
-_SUMMARY_RE = re.compile(r"\b(\d+ (passed|failed|errors?)|no tests ran)\b")
-_DIFF_FLAGS = "--no-color --no-ext-diff --no-textconv --no-renames --binary --full-index"
+# `--text`: a `-diff` / `binary` attribute (in-tree `.gitattributes`) can never hide a text
+# change behind "Binary files differ" / a `GIT binary patch` the human cannot read.
+_DIFF_FLAGS = "--no-color --no-ext-diff --no-textconv --no-renames --binary --full-index --text"
+_RAW_FLAGS = "--raw -z --no-renames --full-index --no-color"
+REGULAR_MODE = "100644"
+ABSENT_MODE = "000000"
+SYMLINK_MODE = "120000"
+GITLINK_MODE = "160000"
+INFO_ATTRIBUTES = f"{REPO_DIR}/.git/info/attributes"
 
 
 class WorkspaceError(RuntimeError):
     """A workspace shell or file operation failed."""
 
 
-@dataclass
-class TestReport:
-    __test__ = False  # not a pytest test class
+@dataclass(frozen=True)
+class RawEntry:
+    """One `git diff --raw` entry vs the base commit."""
 
-    passed: bool
-    summary: str
-    output_tail: str
+    old_mode: str
+    new_mode: str
+    status: str  # A / M / D / T ...
+    path: str
+
+
+def unpublishable_reason(entry: RawEntry) -> str | None:
+    """Why `entry` cannot be published as a plain file write/delete, or None if it can.
+
+    `publish_pull_request` pushes regular-file contents (mode 100644) and deletions only, so
+    symlinks, gitlinks (embedded repos / submodules), executable new files and ANY mode change
+    would make the PR differ from the diff the human approved: they are refused (fail closed).
+    """
+    modes = (entry.old_mode, entry.new_mode)
+    if SYMLINK_MODE in modes:
+        return "symlink"
+    if GITLINK_MODE in modes:
+        return "gitlink (embedded repository or submodule)"
+    if ABSENT_MODE not in modes and entry.old_mode != entry.new_mode:
+        return f"mode change {entry.old_mode} -> {entry.new_mode}"
+    if entry.old_mode == ABSENT_MODE and entry.new_mode != REGULAR_MODE:
+        return f"new file with mode {entry.new_mode}"
+    return None
+
+
+def parse_raw_diff(raw: bytes) -> list[RawEntry]:
+    """Parse `git diff --raw -z --no-renames` output (`:old new sha sha STATUS\\0path\\0`)."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise WorkspaceError("A changed file path is not valid UTF-8") from e
+    fields = text.split("\0")
+    entries: list[RawEntry] = []
+    for meta, path in zip(fields[0::2], fields[1::2], strict=False):
+        if not meta:
+            continue
+        parts = meta.lstrip(":").split()
+        if len(parts) != 5 or not path:
+            raise WorkspaceError(f"Unexpected git diff --raw entry: {meta!r} {path!r}")
+        entries.append(RawEntry(parts[0], parts[1], parts[4][:1], path))
+    return entries
 
 
 def parse_exit_code(output: str) -> int:
@@ -279,22 +321,60 @@ class Workspace:
             raise WorkspaceError(f"No valid base sha recorded at {BASE_SHA_FILE}")
         return sha
 
-    async def _diff_bytes(self) -> bytes:
+    async def _raw_entries(self, sha: str) -> list[RawEntry]:
+        """Changed entries (with modes) vs `sha`; call after `add -N .` (untracked included)."""
+        return parse_raw_diff(await self._capture_git(f"diff {_RAW_FLAGS} {sha}", "raw"))
+
+    async def _check_publishable(self, entries: list[RawEntry]) -> None:
+        """Raise WorkspaceError unless the change set can be published exactly as diffed.
+
+        Refuses symlinks, gitlinks, mode changes and executable new files (see
+        `unpublishable_reason`), and a repo-local `.git/info/attributes` file: it is invisible
+        in the diff yet could change how git renders it (eol/text/diff attributes).
+        """
+        bad = [f"{e.path} ({reason})" for e in entries if (reason := unpublishable_reason(e))]
+        if bad:
+            raise WorkspaceError(
+                "Unpublishable changes (only regular-file edits, additions and deletions can be "
+                "published; revert these): " + ", ".join(bad)
+            )
+        (resp,) = await self.backend.adownload_files([INFO_ATTRIBUTES])
+        if resp.error == "file_not_found":
+            return
+        if resp.error is not None or (resp.content or b"").strip():
+            raise WorkspaceError(
+                "Unpublishable workspace: .git/info/attributes exists (repo-local git attributes "
+                "would change the reviewed diff); delete it"
+            )
+
+    async def _diff_bytes(self, *, publishable: bool) -> bytes:
         sha = await self.base_sha()
         await self._git("add -N .")
+        if publishable:
+            await self._check_publishable(await self._raw_entries(sha))
         return await self._capture_git(f"diff {_DIFF_FLAGS} {sha}", "diff.patch")
 
     async def diff(self) -> str:
-        """Full diff vs the base SHA: committed + uncommitted + new (untracked) files."""
-        return (await self._diff_bytes()).decode("utf-8", errors="replace")
+        """Full diff vs the base SHA: committed + uncommitted + new (untracked) files.
+
+        For display only (never refuses); the review gate and publication use
+        `diff_and_hash` / `diff_hash`, which refuse unpublishable change sets.
+        """
+        return (await self._diff_bytes(publishable=False)).decode("utf-8", errors="replace")
 
     async def diff_hash(self) -> str:
-        """sha256 hex of the exact diff bytes git produced."""
-        return hashlib.sha256(await self._diff_bytes()).hexdigest()
+        """sha256 hex of the exact diff bytes git produced.
+
+        Raises WorkspaceError if the change set is not publishable (`_check_publishable`).
+        """
+        return hashlib.sha256(await self._diff_bytes(publishable=True)).hexdigest()
 
     async def diff_and_hash(self) -> tuple[str, str]:
-        """`(diff(), diff_hash())` computed from ONE git read, so the hash matches the text."""
-        raw = await self._diff_bytes()
+        """`(diff(), diff_hash())` computed from ONE git read, so the hash matches the text.
+
+        Raises WorkspaceError if the change set is not publishable (`_check_publishable`).
+        """
+        raw = await self._diff_bytes(publishable=True)
         return raw.decode("utf-8", errors="replace"), hashlib.sha256(raw).hexdigest()
 
     async def read_repo_file(self, rel_path: str) -> str | None:
@@ -326,27 +406,15 @@ class Workspace:
     async def changed_files(self) -> list[FileChange]:
         """Individual changed files vs the base SHA (ignored files excluded), sorted by path.
 
-        Renames appear as delete + add. Deleted files have `content=None`.
+        Renames appear as delete + add. Deleted files have `content=None`. Raises
+        WorkspaceError (naming the paths) if any entry is not a plain regular-file change
+        (symlink, gitlink, mode change...), so publication fails closed.
         """
         sha = await self.base_sha()
-        await self._git("add -N .")  # same index state as diff(), whatever ran before
-        status_raw = await self._capture_git(
-            f"diff --name-status --no-renames -z {sha}", "name_status"
-        )
-        others_raw = await self._capture_git("ls-files --others --exclude-standard -z", "others")
-
-        try:
-            status_text, others_text = status_raw.decode("utf-8"), others_raw.decode("utf-8")
-        except UnicodeDecodeError as e:
-            raise WorkspaceError("A changed file path is not valid UTF-8") from e
-        status: dict[str, str] = {}
-        fields = status_text.split("\0")
-        for code, path in zip(fields[0::2], fields[1::2], strict=False):
-            if code:
-                status[path] = code[0]
-        for path in others_text.split("\0"):
-            if path and not path.endswith("/"):  # trailing "/" = embedded repo, not a file
-                status.setdefault(path, "A")
+        await self._git("add -N .")  # same index state as diff(): untracked files included
+        entries = await self._raw_entries(sha)
+        await self._check_publishable(entries)
+        status = {e.path: e.status for e in entries}
 
         paths = sorted(status)
         present = [p for p in paths if status[p] != "D"]
@@ -370,22 +438,6 @@ class Workspace:
             except UnicodeDecodeError as e:
                 raise WorkspaceError(f"Changed file is not UTF-8 text: {path}") from e
         return changes
-
-    async def run_tests(self) -> TestReport:
-        """Run the demo repo's test command (`uv run pytest -q`) inside the repo."""
-        command = f"uv run --directory {_q(self.shell_repo_dir)} {TEST_COMMAND}"
-        resp = await self.backend.aexecute(command, timeout=TEST_TIMEOUT)
-        code = resp.exit_code if resp.exit_code is not None else parse_exit_code(resp.output)
-        lines = resp.output.splitlines()
-        summary = next(
-            (ln.strip().strip("=").strip() for ln in reversed(lines) if _SUMMARY_RE.search(ln)),
-            f"pytest exited with code {code}",
-        )
-        return TestReport(
-            passed=code == 0,
-            summary=summary,
-            output_tail="\n".join(lines[-OUTPUT_TAIL_LINES:]),
-        )
 
 
 @functools.cache

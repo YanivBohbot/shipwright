@@ -104,8 +104,15 @@ async def test_base_sha_rejects_garbage():
 
 async def test_changed_files_handles_added_modified_deleted():
     sb = _cloned_sandbox()
-    sb.on("--name-status", redirect=b"M\x00app/a.py\x00D\x00app/c.py\x00")
-    sb.on("ls-files --others", redirect=b"app/b.py\x00")
+    z = "0" * 40
+    sb.on(
+        "diff --raw",
+        redirect=(
+            f":100644 100644 {SHA} {z} M\0app/a.py\0"
+            f":000000 100644 {z} {z} A\0app/b.py\0"
+            f":100644 000000 {SHA} {z} D\0app/c.py\0"
+        ).encode(),
+    )
     sb.files[f"{REPO_DIR}/app/a.py"] = b"print('a2')\n"
     sb.files[f"{REPO_DIR}/app/b.py"] = b"print('b')\n"
 
@@ -116,9 +123,9 @@ async def test_changed_files_handles_added_modified_deleted():
         FileChange(path="app/b.py", content="print('b')\n"),
         FileChange(path="app/c.py", content=None),
     ]
-    name_status = next(c for c in sb.executed if "--name-status" in c)
-    assert f"-z {SHA}" in name_status and "--no-renames" in name_status
-    assert sb.count("--exclude-standard -z") == 1
+    raw = next(c for c in sb.executed if "diff --raw" in c)
+    assert f" {SHA} >" in raw and "--no-renames" in raw and "-z" in raw
+    assert sb.executed.index(f'git -C "{REPO_DIR}" add -N .') < sb.executed.index(raw)
 
 
 async def test_diff_reads_redirected_file_and_hashes_it():
@@ -143,32 +150,6 @@ async def test_diff_raises_when_git_fails():
     sb = _cloned_sandbox().on("diff --no-color", output="fatal: bad object", exit_code=128)
     with pytest.raises(WorkspaceError, match="bad object"):
         await _fake_ws(sb).diff()
-
-
-# ---------------------------------------------------------------- run_tests
-
-
-async def test_run_tests_reports_failure_tail():
-    lines = [f"line {i}" for i in range(100)]
-    output = "\n".join([*lines, "FAILED tests/test_x.py::test_y", "1 failed, 2 passed in 0.12s"])
-    sb = _cloned_sandbox().on("pytest", output=output + "\n\nExit code: 1", exit_code=1)
-
-    report = await _fake_ws(sb).run_tests()
-
-    assert report.passed is False
-    assert report.summary == "1 failed, 2 passed in 0.12s"
-    tail = report.output_tail.splitlines()
-    assert len(tail) == 80
-    assert "1 failed, 2 passed in 0.12s" in tail
-    assert "line 0" not in tail
-    assert sb.executed[-1] == 'uv run --directory "/workspace/repo" pytest -q'
-
-
-async def test_run_tests_passing_with_parsed_exit_code():
-    sb = _cloned_sandbox(structured_exit=False).on("pytest", output="...\n3 passed in 0.50s")
-    report = await _fake_ws(sb).run_tests()
-    assert report.passed is True
-    assert report.summary == "3 passed in 0.50s"
 
 
 # ---------------------------------------------------------------- open_workspace
@@ -383,6 +364,79 @@ async def test_changed_files_consistent_with_diff_after_untracking(real_ws):
     assert await ws.diff() == ""
 
 
+async def _assert_unpublishable(ws: Workspace, match: str) -> None:
+    """Gate (diff_and_hash), publish (diff_hash, changed_files) all refuse; display still works."""
+    for call in (ws.diff_and_hash, ws.diff_hash, ws.changed_files):
+        with pytest.raises(WorkspaceError, match=match):
+            await call()
+    assert (await ws.diff()).strip()
+
+
+async def test_real_git_symlink_is_refused(real_ws):
+    # committed by the developer then checked out: raw diff vs base shows new mode 120000
+    # (portable: on Windows core.symlinks=false, the worktree gets a plain file)
+    ws, repo = real_ws
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        cwd=repo,
+        input="app/a.py",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob},app/link.py")
+    _git(repo, "commit", "-q", "-m", "add symlink")
+    _git(repo, "checkout", "--", "app/link.py")
+    await _assert_unpublishable(ws, r"app/link\.py \(symlink\)")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="real symlinks need core.symlinks (POSIX)")
+async def test_real_git_untracked_symlink_is_refused(real_ws):
+    ws, repo = real_ws
+    (repo / "app" / "link.py").symlink_to("a.py")
+    await _assert_unpublishable(ws, r"app/link\.py \(symlink\)")
+
+
+async def test_real_git_mode_only_change_is_refused(real_ws):
+    ws, repo = real_ws
+    _git(repo, "update-index", "--chmod=+x", "app/a.py")
+    _git(repo, "commit", "-q", "-m", "chmod")
+    os.chmod(repo / "app" / "a.py", 0o755)  # matters where core.filemode=true (Linux)
+    await _assert_unpublishable(ws, r"app/a\.py \(mode change 100644 -> 100755\)")
+
+
+async def test_real_git_embedded_repo_is_refused(real_ws):
+    ws, repo = real_ws
+    nested = repo / "vendor" / "lib"
+    nested.mkdir(parents=True)
+    _git(nested, "init", "-q")
+    (nested / "x.py").write_text("x\n", newline="\n")
+    _git(nested, "add", ".")
+    _git(nested, "commit", "-q", "-m", "x")
+    await _assert_unpublishable(ws, r"vendor/lib \(gitlink")
+
+
+async def test_real_git_minus_diff_attribute_cannot_hide_text_changes(real_ws):
+    ws, repo = real_ws
+    (repo / ".gitattributes").write_text("* -diff\n", newline="\n")
+    (repo / "app" / "a.py").write_text("print('a2')\n", newline="\n")
+    diff, _ = await ws.diff_and_hash()
+    assert "+print('a2')" in diff and "-print('a')" in diff
+    assert "Binary files" not in diff and "GIT binary patch" not in diff
+    paths = [f.path for f in await ws.changed_files()]
+    assert paths == [".gitattributes", "app/a.py"]
+
+
+async def test_real_git_info_attributes_is_refused_but_diff_stays_text(real_ws):
+    ws, repo = real_ws
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "attributes").write_text("* -diff\n", newline="\n")
+    (repo / "app" / "a.py").write_text("print('a2')\n", newline="\n")
+    diff = await ws.diff()
+    assert "+print('a2')" in diff and "GIT binary patch" not in diff
+    await _assert_unpublishable(ws, r"info/attributes")
+
+
 @pytest.mark.parametrize("repo", ["evil repo", "a/b/c", 'a/b"', "../..", "a", "a/b;rm"])
 async def test_invalid_repo_is_rejected(repo):
     with pytest.raises(WorkspaceError, match="Invalid repo"):
@@ -394,7 +448,7 @@ async def test_invalid_repo_is_rejected(repo):
 
 
 async def test_changed_files_rejects_non_utf8_paths():
-    sb = _cloned_sandbox().on("--name-status", redirect=b"M\x00app/\xff.py\x00")
+    sb = _cloned_sandbox().on("diff --raw", redirect=b":100644 100644 a b M\x00app/\xff.py\x00")
     with pytest.raises(WorkspaceError, match="not valid UTF-8"):
         await _fake_ws(sb).changed_files()
 
