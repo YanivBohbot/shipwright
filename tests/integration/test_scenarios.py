@@ -48,6 +48,7 @@ async def test_s3_external_knowledge_uses_web_search(tmp_path):
     env = await build_scenario_env(tmp_path, 3)
     await run_scenario(env, 3)
 
+    assert len(env.github.prs) == 1
     # the researcher's own tool calls are not visible from the orchestrator: the fake records them
     assert env.web.calls, "web_search was never called"
 
