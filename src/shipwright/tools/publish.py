@@ -74,7 +74,7 @@ def _title(key: str, title: str) -> str:
 
 
 def _body(key: str, body: str) -> str:
-    if key.lower() in body.lower():
+    if re.search(rf"(?<![\w-]){re.escape(key)}(?!\d)", body, re.IGNORECASE):
         return body
     return f"Linked ticket: {key}\n\n{body}" if body.strip() else f"Linked ticket: {key}"
 

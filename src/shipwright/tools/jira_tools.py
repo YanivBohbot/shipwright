@@ -70,6 +70,8 @@ def make_jira_tools(jira: JiraGateway, settings: Settings) -> list[BaseTool]:
             ticket = await jira.get_issue(normalized)
         except TicketNotFound:
             return not_found(normalized, project)
+        except Exception as e:  # gateway/network error: report to the model, never raise
+            return f"Failed to read ticket {normalized}: {e}"
         return render_ticket(ticket)
 
     async def update_jira_ticket(key: str, comment: str, transition_to: str | None = None) -> str:

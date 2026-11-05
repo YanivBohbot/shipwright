@@ -279,3 +279,9 @@ async def test_gate_approval_flows_to_publish_through_graph_state():
     last = result["messages"][-1]
     assert isinstance(last, ToolMessage) and last.content == FAKE_PR_URL
     assert len(gh.prs) == 1
+
+
+async def test_publish_body_key_match_is_exact():
+    gh = FakeGitHubGateway()
+    await _publish(_ws(), gh, body="Follow-up of SHIP-21.")
+    assert gh.prs[0]["body"] == "Linked ticket: SHIP-2\n\nFollow-up of SHIP-21."

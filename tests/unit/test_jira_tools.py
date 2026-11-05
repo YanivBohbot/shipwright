@@ -121,3 +121,12 @@ def test_hitl_interrupts_config():
         "update_jira_ticket": {"allowed_decisions": ["approve", "edit", "reject"]},
         "create_jira_subtasks": {"allowed_decisions": ["approve", "edit", "reject"]},
     }
+
+
+async def test_read_ticket_tool_reports_gateway_errors_as_text():
+    class Broken(FakeJiraGateway):
+        async def get_issue(self, key: str) -> Ticket:
+            raise RuntimeError("MCP timeout")
+
+    out = await _tools(Broken())["read_jira_ticket"].ainvoke({"key": "SHIP-2"})
+    assert out == "Failed to read ticket SHIP-2: MCP timeout"
