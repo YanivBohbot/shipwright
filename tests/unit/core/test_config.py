@@ -56,8 +56,14 @@ def test_live_mode_names_every_missing_secret(monkeypatch):
     with pytest.raises(ValidationError) as err:
         Settings(_env_file=None)
     msg = str(err.value)
-    for name in ("GITHUB_PAT", "SHIPWRIGHT_REPO", "JIRA_USERNAME", "JIRA_API_TOKEN",
-                 "MONGODB_URI", "LANGSMITH_API_KEY"):
+    for name in (
+        "GITHUB_PAT",
+        "SHIPWRIGHT_REPO",
+        "JIRA_USERNAME",
+        "JIRA_API_TOKEN",
+        "MONGODB_URI",
+        "LANGSMITH_API_KEY",
+    ):
         assert name in msg
     assert "JIRA_URL," not in msg and not msg.rstrip().endswith("JIRA_URL")
 

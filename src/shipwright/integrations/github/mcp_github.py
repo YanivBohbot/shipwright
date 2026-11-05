@@ -1,12 +1,12 @@
-"""GitHub gateway: a Protocol plus an implementation over the official GitHub MCP server."""
+"""`GitHubGateway` over the official GitHub MCP server (live mode)."""
 
 import re
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from langchain_core.tools import BaseTool
 
-from shipwright.integrations.mcp_client import invoke_mcp_tool
+from shipwright.integrations.github.gateway import FileChange
+from shipwright.integrations.mcp import call_tool
 
 # Tool names of github/github-mcp-server (remote, https://api.githubcopilot.com/mcp/).
 TOOL_CREATE_BRANCH = "create_branch"
@@ -18,25 +18,6 @@ TOOL_LIST_PULL_REQUESTS = "list_pull_requests"
 
 _PAGE_SIZE = 100
 _MAX_PAGES = 10
-
-
-@dataclass(frozen=True)
-class FileChange:
-    path: str
-    content: str | None  # None = delete
-
-
-class GitHubGateway(Protocol):
-    async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None: ...
-    async def push_files(
-        self, repo: str, branch: str, files: list[FileChange], message: str
-    ) -> str: ...
-    async def create_pull_request(
-        self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
-    ) -> str: ...
-    async def list_branch_names(self, repo: str) -> set[str]: ...
-    async def get_branch_sha(self, repo: str, branch: str) -> str: ...
-    async def find_open_pull_request(self, repo: str, head: str) -> str | None: ...
 
 
 def _split_repo(repo: str) -> tuple[str, str]:
@@ -73,14 +54,44 @@ def _as_list(data: Any) -> list[Any]:
     return []
 
 
-class McpGitHubGateway:
+class McpGitHub:
     def __init__(self, tools: dict[str, BaseTool]) -> None:
         self._tools = tools
 
     async def _call(self, tool: str, **args: Any) -> Any:
         if tool not in self._tools:
             raise KeyError(f"MCP tool '{tool}' is not available on the GitHub server")
-        return await invoke_mcp_tool(self._tools[tool], args)
+        return await call_tool(self._tools[tool], args)
+
+    async def _branches(self, repo: str) -> list[dict[str, Any]]:
+        """Every branch item (paged `list_branches`); raises past the page limit."""
+        owner, name = _split_repo(repo)
+        branches: list[dict[str, Any]] = []
+        for page in range(1, _MAX_PAGES + 1):
+            data = await self._call(
+                TOOL_LIST_BRANCHES, owner=owner, repo=name, page=page, perPage=_PAGE_SIZE
+            )
+            items = _as_list(data)
+            branches += [b for b in items if isinstance(b, dict)]
+            if len(items) < _PAGE_SIZE:
+                return branches
+        raise RuntimeError(
+            f"branch listing gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}"
+        )
+
+    async def list_branch_names(self, repo: str) -> set[str]:
+        return {str(b["name"]) for b in await self._branches(repo) if b.get("name")}
+
+    async def get_branch_sha(self, repo: str, branch: str) -> str:
+        """Head commit sha of `branch` (from the `list_branches` item's `commit.sha`)."""
+        item = next((b for b in await self._branches(repo) if b.get("name") == branch), None)
+        if item is None:
+            raise RuntimeError(f"Branch {branch!r} not found in {repo}")
+        commit = item.get("commit")
+        sha = (commit.get("sha") if isinstance(commit, dict) else None) or _find_key(item, "sha")
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise RuntimeError(f"GitHub returned no commit sha for branch {branch!r}: {item!r}")
+        return sha
 
     async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None:
         owner, name = _split_repo(repo)
@@ -137,53 +148,6 @@ class McpGitHubGateway:
             raise RuntimeError(f"GitHub did not return a pull request URL: {data!r}")
         return str(url)
 
-    async def _find_branch(self, repo: str, branch: str) -> dict[str, Any] | None:
-        owner, name = _split_repo(repo)
-        for page in range(1, _MAX_PAGES + 1):
-            data = await self._call(
-                TOOL_LIST_BRANCHES, owner=owner, repo=name, page=page, perPage=_PAGE_SIZE
-            )
-            items = _as_list(data)
-            found = next(
-                (b for b in items if isinstance(b, dict) and b.get("name") == branch), None
-            )
-            if found is not None:
-                return found
-            if len(items) < _PAGE_SIZE:
-                return None
-        raise RuntimeError(
-            f"branch lookup gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}; "
-            f"cannot determine whether branch {branch!r} exists"
-        )
-
-    async def list_branch_names(self, repo: str) -> set[str]:
-        """Names of all branches (paged `list_branches`; raises past the page limit)."""
-        owner, name = _split_repo(repo)
-        names: set[str] = set()
-        for page in range(1, _MAX_PAGES + 1):
-            data = await self._call(
-                TOOL_LIST_BRANCHES, owner=owner, repo=name, page=page, perPage=_PAGE_SIZE
-            )
-            items = _as_list(data)
-            names.update(str(b["name"]) for b in items if isinstance(b, dict) and b.get("name"))
-            if len(items) < _PAGE_SIZE:
-                return names
-        raise RuntimeError(
-            f"list_branch_names gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}"
-        )
-
-    async def get_branch_sha(self, repo: str, branch: str) -> str:
-        """Head commit sha of `branch` (from the `list_branches` item's `commit.sha`)."""
-        item = await self._find_branch(repo, branch)
-        if item is None:
-            raise RuntimeError(f"Branch {branch!r} not found in {repo}")
-        commit = item.get("commit")
-        sha = commit.get("sha") if isinstance(commit, dict) else None
-        sha = sha or _find_key(item, "sha")
-        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
-            raise RuntimeError(f"GitHub returned no commit sha for branch {branch!r}: {item!r}")
-        return sha
-
     async def find_open_pull_request(self, repo: str, head: str) -> str | None:
         owner, name = _split_repo(repo)
         data = await self._call(
@@ -194,8 +158,6 @@ class McpGitHubGateway:
             state="open",
         )
         for pr in _as_list(data):
-            if isinstance(pr, dict):
-                url = pr.get("html_url") or pr.get("url")
-                if url:
-                    return str(url)
+            if isinstance(pr, dict) and (url := pr.get("html_url") or pr.get("url")):
+                return str(url)
         return None

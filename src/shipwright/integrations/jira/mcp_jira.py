@@ -1,18 +1,18 @@
-"""Jira gateway: a Protocol plus an implementation over the `mcp-atlassian` MCP tools."""
+"""`JiraGateway` over the `mcp-atlassian` MCP tools (live mode)."""
 
 import json
 import re
-from typing import Any, Protocol
+from typing import Any
 
 from langchain_core.tools import BaseTool
 
-from shipwright.integrations.mcp_client import McpToolError, invoke_mcp_tool
-from shipwright.tickets import (
+from shipwright.domain.tickets import (
     Ticket,
     TicketNotFound,
     extract_acceptance_criteria,
     extract_spec_refs,
 )
+from shipwright.integrations.mcp import McpToolError, call_tool
 
 # Tool names exposed by mcp-atlassian 0.23.1 (fastmcp namespace "jira").
 TOOL_GET_ISSUE = "jira_get_issue"
@@ -35,30 +35,20 @@ def _is_issue_not_found(exc: Exception, key: str) -> bool:
     return bool(_NOT_FOUND_RE.search(re.sub(r"\s+", " ", text)))
 
 
-class JiraGateway(Protocol):
-    async def get_issue(self, key: str) -> Ticket: ...
-    async def add_comment(self, key: str, body: str) -> str: ...
-    async def transition(self, key: str, to_status: str) -> None: ...
-    async def create_subtask(self, parent_key: str, summary: str, description: str) -> str: ...
-    async def create_issue(
-        self, project: str, summary: str, description: str, issue_type: str
-    ) -> str: ...
-
-
 def _name(value: Any) -> str:
     if isinstance(value, dict):
         return str(value.get("name") or "")
     return str(value or "")
 
 
-class McpJiraGateway:
+class McpJira:
     def __init__(self, tools: dict[str, BaseTool]) -> None:
         self._tools = tools
 
     async def _call(self, tool: str, **args: Any) -> Any:
         if tool not in self._tools:
             raise KeyError(f"MCP tool '{tool}' is not available on the Atlassian server")
-        return await invoke_mcp_tool(self._tools[tool], args)
+        return await call_tool(self._tools[tool], args)
 
     async def get_issue(self, key: str) -> Ticket:
         try:
@@ -130,11 +120,5 @@ class McpJiraGateway:
     async def create_issue(
         self, project: str, summary: str, description: str, issue_type: str
     ) -> str:
-        return await self._create(
-            {
-                "project_key": project,
-                "summary": summary,
-                "issue_type": issue_type,
-                "description": description,
-            }
-        )
+        args = {"project_key": project, "summary": summary, "issue_type": issue_type}
+        return await self._create({**args, "description": description})

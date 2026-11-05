@@ -6,3 +6,9 @@ __pycache__/
 demo/taskboard-api/
 .langgraph_api/
 tmp/
+# local-mode demo state (LocalJira / LocalGitHub)
+demo/.local_jira.json
+demo/.local_jira.tmp
+demo/.local_prs/
+demo/.local_remote.git/
+demo/.local_remote.git.gitconfig

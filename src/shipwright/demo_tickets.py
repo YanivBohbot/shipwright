@@ -1,66 +1,18 @@
 """Demo tickets (one per scenario) and idempotent seeding into Jira."""
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, get_args
-
-import yaml
 
 from shipwright.integrations.jira import JiraGateway
+from shipwright.integrations.jira.local_jira import DemoTicket, Expected  # noqa: F401
+from shipwright.integrations.jira.local_jira import load_demo_tickets as _load
 
 DEFAULT = Path(__file__).resolve().parents[2] / "demo" / "tickets.yaml"
 
-Expected = Literal["pr", "questions", "subtasks", "draft_or_stop"]
-_EXPECTED_VALUES = frozenset(get_args(Expected))
-_FIELDS = ("scenario", "summary", "description", "issue_type", "expected")
-
-
-@dataclass(frozen=True)
-class DemoTicket:
-    scenario: int
-    summary: str
-    description: str
-    issue_type: str
-    expected: Expected
-
-
-def _parse(entry: Any, index: int) -> DemoTicket:
-    if not isinstance(entry, dict):
-        raise ValueError(f"Demo ticket #{index} must be a mapping")
-    missing = [f for f in _FIELDS if f not in entry]
-    if missing:
-        raise ValueError(f"Demo ticket #{index} is missing field(s): {', '.join(missing)}")
-    if not isinstance(entry["scenario"], int) or isinstance(entry["scenario"], bool):
-        raise ValueError(f"Demo ticket #{index}: 'scenario' must be an integer")
-    for f in ("summary", "description", "issue_type"):
-        if not isinstance(entry[f], str) or not entry[f].strip():
-            raise ValueError(f"Demo ticket #{index}: '{f}' must be a non-empty string")
-    if entry["expected"] not in _EXPECTED_VALUES:
-        raise ValueError(
-            f"Demo ticket #{index}: unknown expected value {entry['expected']!r}; "
-            f"expected one of {sorted(_EXPECTED_VALUES)}"
-        )
-    return DemoTicket(
-        scenario=entry["scenario"],
-        summary=entry["summary"].strip(),
-        description=entry["description"].strip("\n"),
-        issue_type=entry["issue_type"].strip(),
-        expected=entry["expected"],
-    )
-
 
 def load_demo_tickets(path: Path = DEFAULT) -> list[DemoTicket]:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        raise ValueError(f"{path}: expected a list of demo tickets")
-    tickets = [_parse(entry, i) for i, entry in enumerate(data, start=1)]
-    seen: set[int] = set()
-    for t in tickets:
-        if t.scenario in seen:
-            raise ValueError(f"Duplicate scenario {t.scenario} in {path}")
-        seen.add(t.scenario)
-    return tickets
+    """v1 entry point (default path); the parser lives in `integrations.jira.local_jira`."""
+    return _load(path)
 
 
 async def seed_demo_tickets(
