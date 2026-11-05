@@ -38,7 +38,7 @@ The body must have exactly this structure:
 <Command run, result line (passed/failed/xfail counts), and the new or changed tests.>
 
 ## Self-review
-Verdict: <APPROVE | CHANGES REQUESTED, as given by the reviewer>
+Verdict: <pass | changes_requested, copied verbatim from the reviewer>
 Risks: <risks and open points reported by the reviewer, or "None identified.">
 
 ## Notes

@@ -11,17 +11,16 @@ from langgraph.store.mongodb import MongoDBStore
 from pymongo import MongoClient
 
 from shipwright.config import get_settings
+from shipwright.persistence import STORE_COLLECTION
 from shipwright.policies import seed_policies
-
-DB_NAME = "shipwright"
-COLLECTION = "store"
 
 
 async def main() -> None:
     settings = get_settings()
     client = MongoClient(settings.mongodb_uri.get_secret_value())
     try:
-        store = MongoDBStore(client[DB_NAME][COLLECTION])
+        # same database/collection as shipwright.persistence.mongo_persistence (CLI runs)
+        store = MongoDBStore(client[settings.mongodb_db][STORE_COLLECTION])
         await seed_policies(store, settings)
     finally:
         client.close()
