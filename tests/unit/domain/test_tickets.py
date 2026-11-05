@@ -1,6 +1,6 @@
 import pytest
 
-from shipwright.tickets import (
+from shipwright.domain.tickets import (
     Ticket,
     extract_acceptance_criteria,
     extract_spec_refs,
