@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from shipwright.integrations.mcp_client import McpToolError
 from shipwright.middleware.audit import AuditMiddleware, MemoryAuditSink
+from shipwright.middleware.policy_seed import PolicySeedMiddleware
 from shipwright.middleware.stack import (
     READ_ONLY_RETRY_TOOLS,
     build_orchestrator_middleware,
@@ -26,6 +27,7 @@ from shipwright.middleware.stack import (
 class _S:
     orchestrator_model_call_limit = 150
     model_light = "fake-light"
+    org_id = "default-org"
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +52,7 @@ def test_stack_order():
         ToolRetryMiddleware,
         ModelFallbackMiddleware,
         AuditMiddleware,
+        PolicySeedMiddleware,
     ]
     assert (mws[0].pii_type, mws[0].strategy) == ("email", "redact")
     assert (mws[1].pii_type, mws[1].strategy) == ("github_token", "block")

@@ -27,6 +27,7 @@ from langchain.agents.middleware import (
 )
 
 from shipwright.middleware.audit import AuditMiddleware, AuditSink
+from shipwright.middleware.policy_seed import PolicySeedMiddleware
 
 # Classic `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` tokens plus fine-grained `github_pat_` tokens.
 GITHUB_TOKEN_PATTERN = r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"
@@ -70,4 +71,5 @@ def build_orchestrator_middleware(settings: Any, audit_sink: AuditSink) -> list[
         ),
         ModelFallbackMiddleware(settings.model_light),
         AuditMiddleware(audit_sink),
+        PolicySeedMiddleware(settings),
     ]

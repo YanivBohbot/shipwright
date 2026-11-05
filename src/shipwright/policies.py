@@ -20,3 +20,11 @@ async def seed_policies(store: BaseStore, settings: Settings) -> None:
     file_data = create_file_data(content)
     value = {k: file_data[k] for k in ("content", "encoding", "created_at", "modified_at")}
     await store.aput(("org", settings.org_id), POLICIES_STORE_KEY, value)
+
+
+async def seed_policies_if_absent(store: BaseStore, settings: Settings) -> bool:
+    """Seed only when the policies are missing (never overwrites). True if it seeded."""
+    if await store.aget(("org", settings.org_id), POLICIES_STORE_KEY) is not None:
+        return False
+    await seed_policies(store, settings)
+    return True
