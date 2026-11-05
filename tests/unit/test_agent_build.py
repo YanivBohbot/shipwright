@@ -31,7 +31,7 @@ from shipwright.context import ShipwrightContext, ShipwrightState
 from shipwright.integrations import github as gh
 from shipwright.integrations import jira as jr
 from shipwright.knowledge.search import KnowledgeSearcher
-from shipwright.middleware.audit import MemoryAuditSink
+from shipwright.middleware.audit import MemoryAuditSink, MongoAuditSink
 from shipwright.permissions import PERMISSIONS
 from shipwright.policies import POLICIES_STORE_KEY, seed_policies
 from shipwright.tools import HITL_INTERRUPTS
@@ -278,6 +278,45 @@ async def test_real_agent_review_gate_and_policy_denial(local_ws):
     assert result["messages"][-1].content == "Approved; done."
 
 
+async def test_real_agent_publish_pauses_on_interrupt_on_before_any_gateway_call(local_ws):
+    settings = settings_stub(shipwright_sandbox_provider="local")
+    publish_args = {
+        "ticket_key": "SHIP-1",
+        "title": "Fix a",
+        "body": "Body",
+        "changelog_entry": "Fix a (SHIP-1)",
+    }
+    model = ScriptedChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "publish_pull_request", "args": publish_args, "id": "p1"}],
+                ),
+                AIMessage(content="unused"),
+            ]
+        )
+    )
+    deps = _deps()
+    graph = build_agent(
+        settings, deps, local_ws, checkpointer=InMemorySaver(), store=InMemoryStore(), model=model
+    )
+    config = {"configurable": {"thread_id": uuid.uuid4().hex}}
+    await graph.ainvoke(
+        {"messages": [{"role": "user", "content": "Publish SHIP-1"}]},
+        config,
+        context=ShipwrightContext(user_id="alice"),
+    )
+
+    (pending,) = (await graph.aget_state(config)).interrupts
+    requests = pending.value["action_requests"]
+    assert [r["name"] for r in requests] == ["publish_pull_request"]
+    assert requests[0]["args"]["ticket_key"] == "SHIP-1"
+    github = deps.github
+    assert github.list_calls == 0 and github.branches == [] and github.prs == []
+    assert github.pushes == []
+
+
 # ------------------------------------------------------------------ make_graph
 
 
@@ -340,9 +379,16 @@ async def test_make_graph_with_thread_builds_live_graph(monkeypatch, spy):
     assert any(p.startswith("/skills/") for p in ws.backend.files)
     kw = spy[0]
     assert kw["checkpointer"] is None and kw["store"] is None
-    audit = next(m for m in kw["middleware"] if type(m).__name__ == "AuditMiddleware")
-    assert type(audit.sink).__name__ == "MongoAuditSink"
-    assert audit.sink._db == settings.mongodb_db
+    sink = _audit_sink(kw)
+    assert isinstance(sink, MongoAuditSink)
+
+    # a second execution reuses the process-level sink (no new Mongo client per run)
+    await graph_mod.make_graph({"configurable": {"thread_id": "t-43"}})
+    assert _audit_sink(spy[1]) is sink
+
+
+def _audit_sink(kw: dict[str, Any]) -> Any:
+    return next(m for m in kw["middleware"] if type(m).__name__ == "AuditMiddleware").sink
 
 
 async def test_make_graph_default_repo_from_settings(monkeypatch, spy):

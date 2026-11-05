@@ -7,6 +7,7 @@ Needs a `.env` with OPENAI_API_KEY / MODEL_* (other services are faked; no MCP, 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -21,6 +22,15 @@ ROOT = Path(__file__).resolve().parents[2]
 DEMO_REPO = ROOT / "demo" / "taskboard-api"
 IGNORE = shutil.ignore_patterns(".git", ".venv", ".pytest_cache", "__pycache__")
 MAX_PAUSES = 10
+_PASSED_RE = re.compile(r"\b([1-9]\d*) passed\b")
+_FAILED_RE = re.compile(r"\b([1-9]\d*) (failed|errors?)\b")
+
+
+def assert_green(test_report: str) -> None:
+    """pytest counts: at least one passed, no non-zero failed/error count, no failing status."""
+    assert _PASSED_RE.search(test_report), test_report
+    assert not _FAILED_RE.search(test_report), test_report
+    assert "TESTS_FAILING" not in test_report, test_report
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -120,7 +130,7 @@ async def test_scenario_1_bugfix_reaches_review_gate(tmp_path):
         value = pending.value
         if value.get("kind") == "review_gate":
             if not seen:  # first pause: the review gate on a green, relevant diff
-                assert "passed" in value["test_report"] and "failed" not in value["test_report"]
+                assert_green(value["test_report"])
                 files = [
                     line.split(" b/", 1)[-1]
                     for line in value["diff"].splitlines()

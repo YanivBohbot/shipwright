@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import ntpath
 import os
@@ -387,6 +388,14 @@ class Workspace:
         )
 
 
+@functools.cache
+def shared_sandbox_client(api_key: str) -> Any:
+    """One LangSmith `SandboxClient` per process and API key (reused across runs/threads)."""
+    from langsmith.sandbox import SandboxClient
+
+    return SandboxClient(api_key=api_key)
+
+
 async def open_workspace(
     settings: Settings,
     *,
@@ -422,9 +431,7 @@ async def open_workspace(
         )
 
     if client is None:
-        from langsmith.sandbox import SandboxClient
-
-        client = SandboxClient(api_key=settings.langsmith_api_key.get_secret_value())
+        client = shared_sandbox_client(settings.langsmith_api_key.get_secret_value())
     name = f"shipwright-{thread_id}"
     existing = [s for s in await asyncio.to_thread(client.list_sandboxes) if s.name == name]
     sandbox = next((s for s in existing if getattr(s, "status", "ready") != "failed"), None)

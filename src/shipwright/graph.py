@@ -14,6 +14,7 @@ stub services that refuse any call (no MCP / Pinecone connection).
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 from deepagents.backends import StateBackend
@@ -77,8 +78,18 @@ async def build_live_dependencies(settings: Settings) -> Dependencies:
         github=McpGitHubGateway(mcp["github"]),
         searcher=KnowledgeSearcher(build_vector_store(settings)),
         web_tool=make_web_search_tool(settings),
-        audit_sink=MongoAuditSink(settings.mongodb_uri.get_secret_value(), settings.mongodb_db),
+        audit_sink=shared_audit_sink(settings.mongodb_uri.get_secret_value(), settings.mongodb_db),
     )
+
+
+@functools.cache
+def shared_audit_sink(uri: str, db: str) -> MongoAuditSink:
+    """One audit sink (hence one lazily created AsyncMongoClient) per process, not per run.
+
+    The factory runs for every execution on a long-lived Agent Server; a sink per run would
+    leak one never-closed client (connection pool + monitor tasks) each time.
+    """
+    return MongoAuditSink(uri, db)
 
 
 async def make_graph(config: RunnableConfig) -> CompiledStateGraph:

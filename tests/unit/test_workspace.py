@@ -449,3 +449,26 @@ async def test_read_repo_file_raises_on_non_missing_errors():
     sb.adownload_files = denied
     with pytest.raises(WorkspaceError, match="permission_denied"):
         await _fake_ws(sb).read_repo_file("CHANGELOG.md")
+
+
+async def test_open_workspace_reuses_one_sandbox_client_per_process(monkeypatch):
+    import langsmith.sandbox
+
+    from shipwright.workspace import shared_sandbox_client
+
+    made: list[FakeSandboxClient] = []
+
+    class CountingClient(FakeSandboxClient):
+        def __init__(self, api_key: str) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(langsmith.sandbox, "SandboxClient", CountingClient)
+    shared_sandbox_client.cache_clear()
+    try:
+        await open_workspace(settings_stub(), thread_id="t1", repo="a/b")
+        await open_workspace(settings_stub(), thread_id="t2", repo="a/b")
+        assert len(made) == 1
+        assert [c["name"] for c in made[0].created] == ["shipwright-t1", "shipwright-t2"]
+    finally:
+        shared_sandbox_client.cache_clear()

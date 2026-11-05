@@ -37,10 +37,15 @@ never write code yourself: the `developer` subagent does.
    - `developer` with the acceptance criteria, the research/analysis results and both paths.
      It ends with `STATUS: TESTS_PASSING` or `STATUS: TESTS_FAILING`.
 7. **Failing tests.** If the developer reports `STATUS: TESTS_FAILING` after its
-   {max_test_attempts} test attempts, do not hide it: call `request_human_review` and say
-   explicitly in the summary and the test report that the tests are FAILING. If the human
-   approves anyway, publish with `publish_pull_request(..., draft=True)` and mention the failing
-   tests in the PR body. On feedback, send the hint to the developer; on reject, stop.
+   {max_test_attempts} test attempts, do not hide it and **skip the reviewer** (step 8): call
+   `request_human_review` directly and state explicitly in the summary and the test report that
+   the tests are FAILING (pass "Not reviewed: tests failing." as the review report).
+   - If the human approves anyway, publish with `publish_pull_request(..., draft=True)`, mention
+     the failing tests in the PR body, then continue with the Jira update (step 11) and the
+     final summary (step 12).
+   - On feedback, send the hint to the developer and resume from its new result (step 7 again
+     if tests still fail, otherwise step 8).
+   - On reject, stop and report.
 8. Delegate to `reviewer` with the list of modified files and the ticket's acceptance criteria
    verbatim. If its verdict is `changes_requested`, send its findings back to the `developer`,
    then review again: at most **{max_review_cycles}** reviewer/developer cycles. After the last

@@ -182,3 +182,30 @@ def test_main_rejects_unsafe_thread(monkeypatch, capsys):
     monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: None)
     assert cli.main(["run", "SHIP-1", "--thread", "../etc"]) == 2
     assert "thread" in capsys.readouterr().err.lower()
+
+
+def test_resume_mismatch_warning():
+    gate = [_interrupt(GATE)]
+    assert cli.paused_ticket_keys(gate) == {"SHIP-1"}
+    assert cli.paused_ticket_keys([_interrupt(HITL)]) == {"SHIP-1"}
+    assert cli.resume_mismatch_warning("SHIP-1", gate) is None
+    assert cli.resume_mismatch_warning("ship-1", gate) is None
+    warning = cli.resume_mismatch_warning("SHIP-9", gate)
+    assert warning is not None and "SHIP-1" in warning and "SHIP-9" in warning
+    assert cli.resume_mismatch_warning("SHIP-9", [_interrupt({"kind": "other"})]) is None
+
+
+async def test_ask_resume_runs_prompts_off_the_event_loop(monkeypatch):
+    import threading
+
+    seen: list[str] = []
+    main = threading.current_thread().name
+
+    def fake_build(interrupts, ask=input):
+        seen.append(threading.current_thread().name)
+        return Command(resume={"type": "reject", "message": ""})
+
+    monkeypatch.setattr(cli, "build_resume_command", fake_build)
+    cmd = await cli.ask_resume([_interrupt(GATE)])
+    assert cmd.resume["type"] == "reject"
+    assert seen and seen[0] != main

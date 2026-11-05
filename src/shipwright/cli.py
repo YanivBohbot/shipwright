@@ -234,6 +234,38 @@ def default_thread(key: str) -> str:
     return f"{key.lower()}-{uuid.uuid4().hex[:8]}"
 
 
+_KEY_ARGS = ("ticket_key", "key", "parent_key")
+
+
+def paused_ticket_keys(interrupts: Sequence[Any]) -> set[str]:
+    """Ticket keys the pending interrupts are about (review gate payload or tool arguments)."""
+    keys: set[str] = set()
+    for intr in interrupts:
+        value = intr.value if isinstance(intr.value, dict) else {}
+        sources = [value, *(a.get("args") or {} for a in value.get("action_requests") or [])]
+        for source in sources:
+            for name in _KEY_ARGS:
+                if isinstance(source.get(name), str) and source[name].strip():
+                    keys.add(source[name].strip().upper())
+    return keys
+
+
+def resume_mismatch_warning(key: str, interrupts: Sequence[Any]) -> str | None:
+    """Warning when `--thread` resumes a run paused on another ticket than the one given."""
+    paused = paused_ticket_keys(interrupts)
+    if not paused or key.upper() in paused:
+        return None
+    return (
+        f"WARNING: this thread is paused on {', '.join(sorted(paused))}, not {key}. "
+        "Your decision applies to the paused run."
+    )
+
+
+async def ask_resume(interrupts: Sequence[Any]) -> Command:
+    """`build_resume_command` in a worker thread, so `input()` never blocks the event loop."""
+    return await asyncio.to_thread(build_resume_command, interrupts)
+
+
 async def run_ticket(args: argparse.Namespace) -> None:
     from shipwright.agent import build_agent
     from shipwright.config import get_settings
@@ -264,7 +296,9 @@ async def run_ticket(args: argparse.Namespace) -> None:
         state = await agent.aget_state(config)
         if state.interrupts:
             print("Resuming a paused run.")
-            run_input: Any = build_resume_command(state.interrupts)
+            if (warning := resume_mismatch_warning(key, state.interrupts)) is not None:
+                print(warning, file=sys.stderr)
+            run_input: Any = await ask_resume(state.interrupts)
         else:
             run_input = {"messages": [{"role": "user", "content": f"Process Jira ticket {key}."}]}
         while True:
@@ -275,7 +309,7 @@ async def run_ticket(args: argparse.Namespace) -> None:
             state = await agent.aget_state(config)
             if not state.interrupts:
                 break
-            run_input = build_resume_command(state.interrupts)
+            run_input = await ask_resume(state.interrupts)
         print(f"\nDone. Resume or inspect later with --thread {thread}")
 
 
