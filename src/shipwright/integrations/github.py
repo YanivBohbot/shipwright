@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from langchain_core.tools import BaseTool
 
-from shipwright.integrations.mcp_client import normalize_tool_result
+from shipwright.integrations.mcp_client import invoke_mcp_tool
 
 # Tool names of github/github-mcp-server (remote, https://api.githubcopilot.com/mcp/).
 TOOL_CREATE_BRANCH = "create_branch"
@@ -36,6 +36,7 @@ class GitHubGateway(Protocol):
         self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> str: ...
     async def branch_exists(self, repo: str, branch: str) -> bool: ...
+    async def list_branch_names(self, repo: str) -> set[str]: ...
     async def get_branch_sha(self, repo: str, branch: str) -> str: ...
     async def find_open_pull_request(self, repo: str, head: str) -> str | None: ...
     async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None: ...
@@ -89,7 +90,7 @@ class McpGitHubGateway:
     async def _call(self, tool: str, **args: Any) -> Any:
         if tool not in self._tools:
             raise KeyError(f"MCP tool '{tool}' is not available on the GitHub server")
-        return normalize_tool_result(await self._tools[tool].ainvoke(args))
+        return await invoke_mcp_tool(self._tools[tool], args)
 
     async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None:
         owner, name = _split_repo(repo)
@@ -167,6 +168,22 @@ class McpGitHubGateway:
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return await self._find_branch(repo, branch) is not None
+
+    async def list_branch_names(self, repo: str) -> set[str]:
+        """Names of all branches (paged `list_branches`; raises past the page limit)."""
+        owner, name = _split_repo(repo)
+        names: set[str] = set()
+        for page in range(1, _MAX_PAGES + 1):
+            data = await self._call(
+                TOOL_LIST_BRANCHES, owner=owner, repo=name, page=page, perPage=_PAGE_SIZE
+            )
+            items = _as_list(data)
+            names.update(str(b["name"]) for b in items if isinstance(b, dict) and b.get("name"))
+            if len(items) < _PAGE_SIZE:
+                return names
+        raise RuntimeError(
+            f"list_branch_names gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}"
+        )
 
     async def get_branch_sha(self, repo: str, branch: str) -> str:
         """Head commit sha of `branch` (from the `list_branches` item's `commit.sha`)."""

@@ -13,6 +13,7 @@ from deepagents.backends.protocol import (
 )
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from langchain_core.messages import ToolMessage
 from langchain_core.vectorstores import VectorStore
 
 from shipwright.config import Settings
@@ -103,18 +104,31 @@ class FakeTool:
     """
 
     def __init__(
-        self, name: str = "fake_tool", result: Any = None, raises: Exception | None = None
+        self,
+        name: str = "fake_tool",
+        result: Any = None,
+        raises: Exception | None = None,
+        error_content: str | None = None,
     ):
         self.name = name
         self.result = result
         self.raises = raises
+        self.error_content = error_content  # mimic adapter handle_tool_errors=True output
         self.calls: list[dict[str, Any]] = []
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        call_id = None
+        if isinstance(input, dict) and input.get("type") == "tool_call":
+            call_id, input = input["id"], input["args"]
         self.calls.append(input)
         if self.raises is not None:
             raise self.raises
-        return self.result(input) if callable(self.result) else self.result
+        if self.error_content is not None:
+            return ToolMessage(self.error_content, tool_call_id=call_id or "x", status="error")
+        result = self.result(input) if callable(self.result) else self.result
+        if call_id is not None:
+            return ToolMessage(content=result if result is not None else "", tool_call_id=call_id)
+        return result
 
 
 class FakeJiraGateway:
@@ -166,6 +180,7 @@ class FakeGitHubGateway:
         self.existing_branches = set(existing_branches)
         self.open_prs = dict(open_prs or {})
         self.branch_shas = dict(branch_shas or {})  # branch -> head sha (default FAKE_BASE_SHA)
+        self.list_calls = 0
         self.branches: list[tuple[str, str, str]] = []
         self.pushes: list[tuple[str, str, list[FileChange], str]] = []
         self.prs: list[dict[str, Any]] = []
@@ -174,6 +189,8 @@ class FakeGitHubGateway:
     async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None:
         self.branches.append((repo, branch, from_branch))
         self.existing_branches.add(branch)
+        # a new branch points at its source's head unless a test pre-configured its sha
+        self.branch_shas.setdefault(branch, self.branch_shas.get(from_branch, FAKE_BASE_SHA))
 
     async def push_files(
         self, repo: str, branch: str, files: list[FileChange], message: str
@@ -193,6 +210,10 @@ class FakeGitHubGateway:
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return branch in self.existing_branches
+
+    async def list_branch_names(self, repo: str) -> set[str]:
+        self.list_calls += 1
+        return set(self.existing_branches)
 
     async def get_branch_sha(self, repo: str, branch: str) -> str:
         return self.branch_shas.get(branch, FAKE_BASE_SHA)

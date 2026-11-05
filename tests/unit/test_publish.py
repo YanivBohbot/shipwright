@@ -12,6 +12,7 @@ from langgraph.types import Command
 
 from shipwright.context import ShipwrightState
 from shipwright.integrations.github import FileChange
+from shipwright.integrations.mcp_client import McpToolError
 from shipwright.tools.publish import insert_changelog_entry, make_publish_tool
 from shipwright.tools.review_gate import make_review_gate_tool
 from shipwright.workspace import WorkspaceError
@@ -362,3 +363,29 @@ async def test_publish_body_key_match_is_exact():
     gh = FakeGitHubGateway()
     await _publish(_ws(), gh, body="Follow-up of SHIP-21.")
     assert gh.prs[0]["body"] == "Linked ticket: SHIP-2\n\nFollow-up of SHIP-21."
+
+
+async def test_publish_stops_when_create_branch_fails():
+    class Exists(FakeGitHubGateway):
+        async def create_branch(self, repo, branch, from_branch="main"):
+            raise McpToolError("create_branch", "422 Reference already exists")
+
+    gh = Exists()
+    out = await _publish(_ws(), gh)
+    assert "creating the branch" in out and "Reference already exists" in out
+    assert gh.pushes == [] and gh.prs == []
+
+
+async def test_publish_refuses_when_new_branch_not_at_base():
+    # main moved between the main-sha check and create_branch
+    gh = FakeGitHubGateway(branch_shas={BRANCH: "9" * 40})
+    out = await _publish(_ws(), gh)
+    assert out.startswith("REFUSED") and BRANCH in out and "No files were pushed" in out
+    assert gh.branches == [(REPO, BRANCH, "main")]
+    assert gh.pushes == [] and gh.prs == []
+
+
+async def test_publish_lists_branches_once():
+    gh = FakeGitHubGateway(existing_branches={BRANCH, f"{BRANCH}-r2"})
+    await _publish(_ws(), gh)
+    assert gh.list_calls == 1 and gh.branches[0][1] == f"{BRANCH}-r3"

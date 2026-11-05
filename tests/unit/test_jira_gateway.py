@@ -133,3 +133,18 @@ async def test_non_dict_result_is_runtime_error():
     gw = McpJiraGateway(tools={"jira_get_issue": FakeTool(result="garbage text")})
     with pytest.raises(RuntimeError, match="str"):
         await gw.get_issue("SHIP-1")
+
+
+async def test_not_found_detected_through_error_status_result():
+    tool = FakeTool(error_content="Issue SHIP-999 not found.")
+    gw = McpJiraGateway(tools={"jira_get_issue": tool})
+    with pytest.raises(TicketNotFound):
+        await gw.get_issue("SHIP-999")
+
+
+async def test_write_error_status_result_raises():
+    from shipwright.integrations.mcp_client import McpToolError
+
+    gw = McpJiraGateway(tools={"jira_add_comment": FakeTool(error_content="403 Forbidden")})
+    with pytest.raises(McpToolError, match="403 Forbidden"):
+        await gw.add_comment("SHIP-1", "hi")

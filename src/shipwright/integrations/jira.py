@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from langchain_core.tools import BaseTool
 
-from shipwright.integrations.mcp_client import normalize_tool_result
+from shipwright.integrations.mcp_client import McpToolError, invoke_mcp_tool
 from shipwright.tickets import (
     Ticket,
     TicketNotFound,
@@ -30,7 +30,8 @@ _NOT_FOUND_RE = re.compile(r"\bissue\s+(?:not found|does not exist)\b", re.IGNOR
 
 
 def _is_issue_not_found(exc: Exception, key: str) -> bool:
-    text = re.sub(re.escape(key), "", str(exc), flags=re.IGNORECASE)
+    raw = exc.message if isinstance(exc, McpToolError) else str(exc)
+    text = re.sub(re.escape(key), "", raw, flags=re.IGNORECASE)
     return bool(_NOT_FOUND_RE.search(re.sub(r"\s+", " ", text)))
 
 
@@ -57,7 +58,7 @@ class McpJiraGateway:
     async def _call(self, tool: str, **args: Any) -> Any:
         if tool not in self._tools:
             raise KeyError(f"MCP tool '{tool}' is not available on the Atlassian server")
-        return normalize_tool_result(await self._tools[tool].ainvoke(args))
+        return await invoke_mcp_tool(self._tools[tool], args)
 
     async def get_issue(self, key: str) -> Ticket:
         try:

@@ -33,6 +33,11 @@ BASE_MOVED = (
     "is based on {base}); publishing would revert upstream changes. Nothing was published. "
     "Restart this ticket on a fresh thread."
 )
+BRANCH_MOVED = (
+    "REFUSED: the new branch {branch} was created at {sha}, not at the workspace base {base} "
+    "(main moved during publication). No files were pushed; the empty branch can be deleted. "
+    "Restart this ticket on a fresh thread."
+)
 MAX_REVISIONS = 20  # shipwright/<key>, then -r2 ... -r20
 
 _UNRELEASED_RE = re.compile(r"^##\s*\[unreleased\]", re.IGNORECASE)
@@ -173,13 +178,9 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
             if main_sha != base_sha:
                 return BASE_MOVED.format(main=main_sha[:12], base=base_sha[:12])
             step = "choosing a branch"
-            earlier: list[str] = []
-            chosen: str | None = None
-            for candidate in candidates:
-                if not await github.branch_exists(repo, candidate):
-                    chosen = candidate
-                    break
-                earlier.append(candidate)
+            existing_branches = await github.list_branch_names(repo)  # one listing
+            chosen = next((c for c in candidates if c not in existing_branches), None)
+            earlier = [c for c in candidates if c in existing_branches]
             if chosen is None:
                 return (
                     f"REFUSED: branches {root} to {candidates[-1]} already exist; delete old "
@@ -195,6 +196,10 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
                 pr_body = f"{pr_body}\n\n{supersedes}"
             step = "creating the branch"
             await github.create_branch(repo, branch, BASE_BRANCH)
+            step = "verifying the new branch"
+            branch_sha = await github.get_branch_sha(repo, branch)
+            if branch_sha != base_sha:  # main moved between the check and create_branch
+                return BRANCH_MOVED.format(branch=branch, sha=branch_sha[:12], base=base_sha[:12])
             step = "pushing the files"
             await github.push_files(repo, branch, to_push, f"{key}: {pr_title[len(key) + 3 :]}")
             step = "creating the pull request"

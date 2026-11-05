@@ -1,8 +1,10 @@
 import json
 
 import pytest
+from langchain_core.tools import StructuredTool, ToolException
 
 from shipwright.integrations.github import FileChange, McpGitHubGateway
+from shipwright.integrations.mcp_client import McpToolError
 from tests.fakes import FAKE_BASE_SHA, FakeGitHubGateway, FakeJiraGateway, FakeTool
 
 REPO = "acme/taskboard-api"
@@ -170,3 +172,55 @@ async def test_fake_get_branch_sha_is_configurable():
     gh = FakeGitHubGateway(branch_shas={"main": "d" * 40})
     assert await gh.get_branch_sha(REPO, "main") == "d" * 40
     assert await FakeGitHubGateway().get_branch_sha(REPO, "main") == FAKE_BASE_SHA
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        FakeTool(name="create_branch", raises=ToolException("422 Reference already exists")),
+        FakeTool(name="create_branch", error_content="422 Reference already exists"),
+    ],
+)
+async def test_create_branch_error_raises_mcp_tool_error(tool):
+    gw = McpGitHubGateway(tools={"create_branch": tool})
+    with pytest.raises(McpToolError, match="Reference already exists") as ei:
+        await gw.create_branch(REPO, "shipwright/ship-2")
+    assert ei.value.tool_name == "create_branch"
+
+
+def _structured(handle_tool_error: bool) -> StructuredTool:
+    async def create_branch(**kwargs) -> tuple[str, None]:
+        raise ToolException("422 Reference already exists")
+
+    return StructuredTool(
+        name="create_branch",
+        description="d",
+        args_schema={"type": "object", "properties": {}},
+        coroutine=create_branch,
+        response_format="content_and_artifact",
+        handle_tool_error=handle_tool_error,
+    )
+
+
+@pytest.mark.parametrize("handled", [True, False])
+async def test_real_structured_tool_errors_are_detected_either_way(handled):
+    # same StructuredTool shape the MCP adapter builds, with and without handle_tool_errors
+    gw = McpGitHubGateway(tools={"create_branch": _structured(handled)})
+    with pytest.raises(McpToolError, match="Reference already exists"):
+        await gw.create_branch(REPO, "shipwright/ship-2")
+
+
+async def test_push_files_error_raises_mcp_tool_error():
+    gw = McpGitHubGateway(tools={"push_files": FakeTool(error_content="409 conflict")})
+    with pytest.raises(McpToolError):
+        await gw.push_files(REPO, "b", [FileChange("a.py", "x")], "m")
+
+
+async def test_list_branch_names_pages_once_through_all_branches():
+    pages = {1: [{"name": f"b{i}"} for i in range(100)], 2: [{"name": "main"}]}
+    tool = FakeTool(result=lambda a: json.dumps(pages.get(a["page"], [])))
+    gw = McpGitHubGateway(tools={"list_branches": tool})
+    names = await gw.list_branch_names(REPO)
+    assert "main" in names and "b99" in names and len(names) == 101
+    assert [c["page"] for c in tool.calls] == [1, 2]
+    assert await FakeGitHubGateway(existing_branches={"x"}).list_branch_names(REPO) == {"x"}

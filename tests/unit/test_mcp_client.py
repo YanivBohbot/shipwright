@@ -69,3 +69,15 @@ async def test_load_mcp_tools_groups_by_server(monkeypatch):
 def test_normalize_tool_result(raw, expected):
     assert normalize_tool_result(raw) == expected
     assert json.dumps(normalize_tool_result(raw))
+
+
+async def test_load_mcp_tools_disables_adapter_error_swallowing(monkeypatch):
+    seen = []
+
+    async def fake(self, *, server_name=None):
+        seen.append(self.handle_tool_errors)
+        return []
+
+    monkeypatch.setattr(MultiServerMCPClient, "get_tools", fake)
+    await load_mcp_tools(settings_stub())
+    assert seen == [False, False]
