@@ -96,6 +96,27 @@ class Settings(BaseSettings):
         """The target repo: `shipwright_repo` in live mode, the local demo repo otherwise."""
         return self.shipwright_repo or LOCAL_REPO
 
+    # Local-mode files, all under `demo_dir` (gitignored except tickets.yaml and the source repo).
+    @property
+    def local_source_repo(self) -> Path:
+        return self.demo_dir / "taskboard-api"
+
+    @property
+    def local_remote(self) -> Path:
+        return self.demo_dir / ".local_remote.git"
+
+    @property
+    def local_prs_dir(self) -> Path:
+        return self.demo_dir / ".local_prs"
+
+    @property
+    def local_tickets(self) -> Path:
+        return self.demo_dir / "tickets.yaml"
+
+    @property
+    def local_jira_state(self) -> Path:
+        return self.demo_dir / ".local_jira.json"
+
 
 @lru_cache
 def get_settings() -> Settings:
