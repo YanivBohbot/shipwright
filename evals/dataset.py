@@ -14,14 +14,14 @@ DATASET_NAME = "shipwright-scenarios"
 _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "shipwright/evals/scenarios")
 
 # Orchestrator `task` subagents a good run is expected to call, per scenario.
-# Scenario 1 is a plain bugfix: no `researcher` (penalised by the trajectory evaluator).
+# Scenario 1 (bugfix) must not call `researcher`; 4 and 7 must not call developer/reviewer.
 EXPECTED_SUBAGENTS: dict[int, list[str]] = {
-    1: ["developer", "reviewer"],
+    1: ["code_analyst", "developer", "reviewer"],
     2: ["researcher", "code_analyst", "developer", "reviewer"],
-    3: ["researcher", "developer", "reviewer"],
+    3: ["researcher", "code_analyst", "developer", "reviewer"],
     4: [],
-    5: ["developer"],
-    6: ["developer", "reviewer"],
+    5: ["code_analyst", "developer"],  # reviewer is skipped when tests fail
+    6: ["code_analyst", "developer", "reviewer"],
     7: [],
 }
 

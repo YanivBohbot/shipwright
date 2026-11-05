@@ -46,6 +46,7 @@ def run(**outputs):
         ("draft_or_stop", {"outcome": "stopped"}, 1),
         ("draft_or_stop", {"outcome": "pr", "draft": True}, 1),
         ("draft_or_stop", {"outcome": "pr", "draft": False}, 0),
+        ("draft_or_stop", {"outcome": "questions"}, 1),
         ("draft_or_stop", {"outcome": "subtasks"}, 0),
     ],
 )
@@ -76,6 +77,13 @@ def test_trajectory_penalizes_unneeded_researcher():
     assert clean["score"] == 1.0
     assert noisy["score"] < clean["score"]
     assert noisy["score"] < 0.8  # below the reference threshold
+
+
+@pytest.mark.parametrize("scenario", [4, 7])
+def test_trajectory_penalizes_code_agents_on_ask_or_split_scenarios(scenario):
+    example = ex(scenario, expected_subagents=[])
+    assert trajectory_subagents(run(subagents=["developer"]), example)["score"] == 0.0
+    assert trajectory_subagents(run(subagents=["code_analyst"]), example)["score"] == 1.0
 
 
 def test_trajectory_researcher_allowed_outside_scenario_1():
@@ -132,10 +140,25 @@ def verdict(*items):
 def test_criteria_covered_is_fraction_with_evidence():
     judge = ScriptedJudge(
         verdict(
-            {"criterion": "AC-1", "covered": True, "evidence": "- [x] AC-1 (tests/test_a.py)"},
-            {"criterion": "AC-2", "covered": True, "evidence": ""},  # ticked without proof
-            {"criterion": "AC-3", "covered": False, "evidence": ""},
-            {"criterion": "AC-4", "covered": True, "evidence": "- [x] AC-4 via test_csv"},
+            {
+                "index": 1,
+                "criterion": "AC-1",
+                "covered": True,
+                "evidence": "- [x] AC-1 (tests/test_a.py)",
+            },
+            {
+                "index": 2,
+                "criterion": "AC-2",
+                "covered": True,
+                "evidence": "",
+            },  # ticked without proof
+            {"index": 3, "criterion": "AC-3", "covered": False, "evidence": ""},
+            {
+                "index": 4,
+                "criterion": "AC-4",
+                "covered": True,
+                "evidence": "- [x] AC-4 via test_csv",
+            },
         )
     )
     evaluator = make_criteria_covered(judge)
@@ -145,11 +168,23 @@ def test_criteria_covered_is_fraction_with_evidence():
     assert result["key"] == "criteria_covered"
     assert result["score"] == 0.5
     sent = str(judge.prompts[0])
-    assert "the body" in sent and "AC-3" in sent and "evidence" in sent.lower()
+    assert "the body" in sent and "3. AC-3" in sent and "evidence" in sent.lower()
 
 
 def test_criteria_covered_missing_verdict_counts_as_uncovered():
-    judge = ScriptedJudge(verdict({"criterion": "AC-1", "covered": True, "evidence": "proof"}))
+    judge = ScriptedJudge(
+        verdict({"index": 1, "criterion": "AC-1", "covered": True, "evidence": "proof"})
+    )
+    result = make_criteria_covered(judge)(
+        run(pr_body="b"), ex(2, acceptance_criteria=["AC-1", "AC-2"])
+    )
+    assert result["score"] == 0.5
+
+
+def test_criteria_covered_matches_by_index_so_paraphrases_count():
+    judge = ScriptedJudge(
+        verdict({"index": 2, "criterion": "reworded text", "covered": True, "evidence": "proof"})
+    )
     result = make_criteria_covered(judge)(
         run(pr_body="b"), ex(2, acceptance_criteria=["AC-1", "AC-2"])
     )
@@ -269,3 +304,12 @@ def test_summarize_questions_subtasks_and_stopped():
     stopped = summarize_run(env_with(comments=[("SHIP-5", "x")]), RunOutcome(interrupts=[gate("")]))
     assert stopped["outcome"] == "stopped"
     assert summarize_run(env_with(), RunOutcome())["outcome"] == "stopped"
+
+
+def test_expected_subagents_follow_the_spec():
+    from evals.dataset import EXPECTED_SUBAGENTS as table
+
+    for scenario in (1, 3, 6):
+        assert "code_analyst" in table[scenario]
+    assert table[5] == ["code_analyst", "developer"]
+    assert table[4] == table[7] == []

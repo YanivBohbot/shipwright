@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 UNNEEDED_RESEARCHER_PENALTY = 0.5
 BUGFIX_SCENARIO = 1
 AMBIGUOUS_SCENARIO = 4
+NO_CODE_SCENARIOS = (4, 7)  # ask / split only: developer and reviewer must not run
 
 
 def _outputs(obj: Any) -> dict[str, Any]:
@@ -29,7 +30,8 @@ def outcome_matches(run: Any, example: Any) -> dict[str, Any]:
     out, ref = _outputs(run), _outputs(example)
     expected, outcome = ref.get("expected"), out.get("outcome")
     if expected == "draft_or_stop":
-        ok = outcome == "stopped" or (outcome == "pr" and bool(out.get("draft")))
+        # a stop is a clean stop or a comment-and-abandon; a PR is only fine as a draft
+        ok = outcome in ("stopped", "questions") or (outcome == "pr" and bool(out.get("draft")))
     else:
         ok = outcome == expected
     return {"key": "outcome", "score": int(ok)}
@@ -44,6 +46,9 @@ def trajectory_subagents(run: Any, example: Any) -> dict[str, Any]:
     if _scenario(example) == BUGFIX_SCENARIO and "researcher" in called:
         score = max(0.0, score - UNNEEDED_RESEARCHER_PENALTY)
         comment += " (unneeded researcher)"
+    if _scenario(example) in NO_CODE_SCENARIOS and called & {"developer", "reviewer"}:
+        score = 0.0
+        comment += " (developer/reviewer must not run)"
     return {"key": "trajectory_subagents", "score": score, "comment": comment}
 
 
@@ -69,7 +74,8 @@ JUDGE_RUBRIC = """\
 You are a strict reviewer of pull request descriptions written by an autonomous coding agent.
 
 You receive the pull request description and the reference acceptance criteria (AC) of the Jira
-ticket. For EACH acceptance criterion decide whether the description ticks it off WITH EVIDENCE.
+ticket, numbered from 1. For EACH acceptance criterion decide whether the description ticks it
+off WITH EVIDENCE.
 
 A criterion is covered only if all of the following hold:
 - the description contains a checked item (for example `- [x]`) for that criterion, and
@@ -77,13 +83,14 @@ A criterion is covered only if all of the following hold:
   behaviour or code location. A bare tick, or a vague claim such as "done" or "implemented",
   is NOT evidence.
 
-Return one verdict per criterion, using the criterion text exactly as given. Put the quoted
-proof in `evidence`, or an empty string when there is none.
+Return one verdict per criterion, identified by its number in `index` (you may paraphrase the
+criterion text). Put the quoted proof in `evidence`, or an empty string when there is none.
 """
 
 
 class CriterionVerdict(BaseModel):
-    criterion: str = Field(description="The acceptance criterion, copied from the input.")
+    index: int = Field(description="1-based number of the acceptance criterion in the input list.")
+    criterion: str = Field(default="", description="The criterion text (informative only).")
     covered: bool = Field(description="True only if ticked off in the PR body with evidence.")
     evidence: str = Field(default="", description="Quoted proof from the PR body, or empty.")
 
@@ -117,11 +124,11 @@ def make_criteria_covered(judge: Any | None = None) -> Callable[[Any, Any], dict
         if chain is None:
             model = judge if judge is not None else _default_judge()
             chain = model.with_structured_output(CriteriaVerdict)
-        listing = "\n".join(f"- {c}" for c in criteria)
+        listing = "\n".join(f"{i}. {c}" for i, c in enumerate(criteria, start=1))
         prompt = f"Acceptance criteria:\n{listing}\n\nPull request description:\n{pr_body}"
         result = chain.invoke([SystemMessage(content=JUDGE_RUBRIC), HumanMessage(content=prompt)])
-        covered = {v.criterion.strip() for v in result.verdicts if v.covered and v.evidence.strip()}
-        hits = sum(c.strip() in covered for c in criteria)
+        covered = {v.index for v in result.verdicts if v.covered and v.evidence.strip()}
+        hits = sum(i in covered for i in range(1, len(criteria) + 1))
         return {
             "key": "criteria_covered",
             "score": hits / len(criteria),

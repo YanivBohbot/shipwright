@@ -27,3 +27,25 @@ This upserts the dataset `shipwright-scenarios` (stable example ids, safe to re-
 | `tests_green` | tests passed at the last review gate (only where `expected == pr`) | informative |
 
 A score of `None` means the evaluator does not apply to that scenario.
+
+## Scoring rules
+
+- `trajectory_subagents`: score = recall of `expected_subagents` (scenario 5 expects no reviewer: it
+  is skipped when tests fail). Penalties: `researcher` called on scenario 1 costs 0.5; on scenarios
+  4 and 7 (ask / split only) any `developer` or `reviewer` call gives 0.
+- `outcome` on scenario 5 (`draft_or_stop`) accepts a draft PR, a clean stop, or a Jira comment
+  followed by abandoning (`questions`). A non-draft PR scores 0. A scenario 5 average below 1.0 can
+  be benign (the agent may legitimately stop earlier or later); read the traces before acting.
+- `criteria_covered`: the judge answers per criterion index, so paraphrased criterion text still
+  counts; a tick without evidence does not.
+
+## Scoring rules
+
+- `trajectory_subagents`: score = recall of `expected_subagents` (scenario 5 expects no reviewer: it
+  is skipped when tests fail). Penalties: `researcher` called on scenario 1 costs 0.5; on scenarios
+  4 and 7 (ask / split only) any `developer` or `reviewer` call gives 0.
+- `outcome` on scenario 5 (`draft_or_stop`) accepts a draft PR, a clean stop, or a Jira comment
+  followed by abandoning (`questions`). A non-draft PR scores 0. A scenario 5 average below 1.0 can
+  be benign (the agent may legitimately stop earlier or later); read the traces before acting.
+- `criteria_covered`: the judge answers per criterion index, so paraphrased criterion text still
+  counts; a tick without evidence does not.
