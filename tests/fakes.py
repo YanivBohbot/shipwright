@@ -54,10 +54,11 @@ def make_settings(**overrides: Any) -> core_config.Settings:
 
     Local mode by default (every optional secret is None); `mode="live"` fills fake live secrets.
     """
-    values: dict[str, Any] = {"openai_api_key": "sk-fake-openai", "mode": "local", **_NO_SECRETS}
-    if overrides.get("mode") == "live":
+    mode = overrides.pop("mode", "local")
+    values: dict[str, Any] = {"openai_api_key": "sk-fake-openai", **_NO_SECRETS}
+    if mode == "live":
         values.update(_LIVE_FAKES)
-    return core_config.Settings(_env_file=None, **{**values, **overrides})
+    return core_config.Settings(_env_file=None, shipwright_mode=mode, **{**values, **overrides})
 
 
 class MemoryAuditSink:

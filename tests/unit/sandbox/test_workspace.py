@@ -193,3 +193,16 @@ async def test_fake_sandbox_failure_and_corrupt_workspace():
     with pytest.raises(WorkspaceError, match="corrupt"):
         await corrupt.ensure_cloned()
     assert os.name in ("nt", "posix")
+
+
+async def test_sandbox_cannot_push_to_the_clone_origin(real_ws, tmp_path):
+    """Publishing goes through the gateway only: a stray `git push` in the sandbox fails."""
+    ws, repo = real_ws
+    origin = tmp_path / "origin"
+    before = git(origin, "for-each-ref")
+    (repo / "app" / "a.py").write_text("print('pushed?')\n", newline="\n")
+    git(repo, "commit", "-qam", "agent commit")
+    for target in ("HEAD:refs/heads/main", "HEAD:refs/heads/sneaky"):
+        with pytest.raises(WorkspaceError, match="exit"):
+            await ws._git(f"push origin {target}")
+    assert git(origin, "for-each-ref") == before

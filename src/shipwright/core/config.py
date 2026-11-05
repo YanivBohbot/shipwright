@@ -27,14 +27,21 @@ _LIVE_REQUIRED = (
 )
 
 
+def _is_set(value: object) -> bool:
+    """False for None, "" and an empty secret (a `.env` placeholder like `JIRA_API_TOKEN=`)."""
+    if isinstance(value, SecretStr):
+        value = value.get_secret_value()
+    return bool(str(value).strip()) if value is not None else False
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_prefix="", extra="ignore", populate_by_name=True
     )
 
-    mode: Literal["local", "live"] = Field(
-        "local", validation_alias=AliasChoices("SHIPWRIGHT_MODE", "mode")
-    )
+    # Env SHIPWRIGHT_MODE; read it as `settings.mode`. (A field named `mode` would also be read
+    # from a generic MODE variable, because of populate_by_name.)
+    shipwright_mode: Literal["local", "live"] = "local"
 
     openai_api_key: SecretStr
     model_strong: str = "openai:gpt-5.5"
@@ -85,11 +92,15 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _require_live_secrets(self) -> "Settings":
         if self.mode == "live":
-            missing = [f for f in _LIVE_REQUIRED if getattr(self, f) in (None, "")]
+            missing = [f for f in _LIVE_REQUIRED if not _is_set(getattr(self, f))]
             if missing:
                 names = ", ".join(f.upper() for f in missing)
                 raise ValueError(f"SHIPWRIGHT_MODE=live requires: {names}")
         return self
+
+    @property
+    def mode(self) -> Literal["local", "live"]:
+        return self.shipwright_mode
 
     @property
     def repo(self) -> str:

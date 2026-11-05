@@ -92,3 +92,17 @@ def test_secrets_not_in_repr(monkeypatch):
         monkeypatch.setenv(k, v)
     s = Settings(_env_file=None)
     assert "ghp_supersecretvalue" not in repr(s) and "sk-fake-openai" not in str(s)
+
+
+def test_generic_mode_env_var_is_ignored(monkeypatch):
+    monkeypatch.setenv("MODE", "live")  # only SHIPWRIGHT_MODE selects the mode
+    assert Settings(_env_file=None).mode == "local"
+
+
+def test_empty_live_secret_counts_as_missing(monkeypatch):
+    for k, v in LIVE_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("SHIPWRIGHT_MODE", "live")
+    monkeypatch.setenv("JIRA_API_TOKEN", "")
+    with pytest.raises(ValidationError, match="requires: JIRA_API_TOKEN"):
+        Settings(_env_file=None)

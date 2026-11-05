@@ -27,6 +27,7 @@ INFO_ATTRIBUTES = f"{REPO_DIR}/.git/info/attributes"
 BOT_NAME = "Shipwright Bot"
 BOT_EMAIL = "shipwright-bot@users.noreply.github.com"
 CLONE_TIMEOUT = 600
+NO_PUSH_URL = "no-push://publish-through-the-review-gate"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -66,6 +67,10 @@ class Workspace(SandboxShell):
                 f"{q(self.clone_url)} {q(self.shell_repo_dir)}",
                 timeout=CLONE_TIMEOUT,
             )
+            # Publishing goes through the GitHub gateway only. Locally the origin is a file://
+            # bare repo that needs no credentials, so a stray `git push` must fail (accident
+            # guard, not a security boundary).
+            await self._git(f"remote set-url --push origin {q(NO_PUSH_URL)}")
             await self._git(f"config user.name {q(BOT_NAME)}")
             await self._git(f"config user.email {q(BOT_EMAIL)}")
             sha = (await self._git("rev-parse HEAD")).strip().splitlines()[0].strip()
