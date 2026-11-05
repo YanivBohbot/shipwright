@@ -3,8 +3,10 @@
 import re
 from typing import Annotated, Any
 
-from langchain.tools import InjectedState
+from langchain.tools import InjectedState, InjectedToolCallId
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
+from langgraph.types import Command
 
 from shipwright.config import Settings
 from shipwright.integrations.github import FileChange, GitHubGateway
@@ -23,6 +25,15 @@ DIFF_CHANGED = (
     "and call request_human_review again."
 )
 NO_FILES = "REFUSED: there are no changed files to publish. Nothing was published."
+WRONG_TICKET = (
+    "REFUSED: the approved changes belong to ticket {approved}, not {key}. Nothing was published."
+)
+BASE_MOVED = (
+    "REFUSED: main has moved since the workspace was cloned (main is at {main}, the workspace "
+    "is based on {base}); publishing would revert upstream changes. Nothing was published. "
+    "Restart this ticket on a fresh thread."
+)
+MAX_REVISIONS = 20  # shipwright/<key>, then -r2 ... -r20
 
 _UNRELEASED_RE = re.compile(r"^##\s*\[unreleased\]", re.IGNORECASE)
 _H1_RE = re.compile(r"^#\s+\S")
@@ -89,15 +100,19 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
         body: str,
         changelog_entry: str,
         state: Annotated[dict[str, Any], InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId],
         draft: bool = False,
-    ) -> str:
-        """Publish the human-approved changes as a GitHub pull request against main.
+    ) -> str | Command:
+        """Publish the human-approved changes as a NEW GitHub pull request against main.
 
         Requires human approval AND a prior approval at request_human_review for the exact
-        current diff: it refuses if the working tree changed since. Pushes every changed
-        file plus CHANGELOG.md (changelog_entry added under "## [Unreleased]") to branch
-        shipwright/<ticket-key> (reused if it exists) and opens the PR, or updates the PR
-        already open for that branch. Returns the PR URL, or a "REFUSED: ..." / error text.
+        current diff of THIS ticket: it refuses if the working tree changed since, or if main
+        moved since the workspace was cloned. Pushes every changed file plus CHANGELOG.md
+        (changelog_entry added under "## [Unreleased]") to a fresh branch created from main:
+        shipwright/<ticket-key>, or shipwright/<ticket-key>-r2, -r3... if earlier branches
+        exist; the new PR then says which open PR it supersedes. Existing branches and PRs
+        are never modified. Returns the PR URL, or a "REFUSED: ..." / error text. After a
+        successful publication the approval is consumed.
 
         Args:
             ticket_key: Jira key of the ticket, e.g. "SHIP-2".
@@ -107,7 +122,7 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
             changelog_entry: One-line CHANGELOG entry in English, e.g. "Fix 500 on empty
                 task title (SHIP-1)".
             draft: Open the PR as a draft (e.g. when tests still fail and the human chose
-                to publish a draft anyway). Ignored when an open PR is updated.
+                to publish a draft anyway).
         """
         try:
             key = parse_ticket_key(ticket_key, project)
@@ -115,9 +130,13 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
             return f"Ticket {ticket_key.strip()} not found in project {project}."
         if not changelog_entry.strip():
             return "REFUSED: changelog_entry must not be empty. Nothing was published."
-        approved = (state or {}).get("approved_diff_hash")
+        state = state or {}
+        approved = state.get("approved_diff_hash")
         if not approved:
             return NOT_APPROVED
+        approved_key = state.get("approved_ticket_key")
+        if approved_key != key:
+            return WRONG_TICKET.format(approved=approved_key or "(unknown)", key=key)
 
         try:
             if await workspace.diff_hash() != approved:
@@ -130,6 +149,7 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
                 changelog = None  # deleted by the developer: recreate it
             else:
                 changelog = await workspace.read_repo_file(CHANGELOG_PATH)
+            base_sha = await workspace.base_sha()
             # TOCTOU guard: what we read must still be exactly what was approved.
             if await workspace.diff_hash() != approved:
                 return DIFF_CHANGED
@@ -142,27 +162,53 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
         to_push.append(
             FileChange(CHANGELOG_PATH, insert_changelog_entry(changelog, changelog_entry))
         )
-        branch = f"shipwright/{key.lower()}"
+        root = f"shipwright/{key.lower()}"
+        candidates = [root] + [f"{root}-r{n}" for n in range(2, MAX_REVISIONS + 1)]
         pr_title, pr_body = _title(key, title), _body(key, body)
 
-        step = "checking the branch"
+        step = "reading the head of main"
+        branch = root
         try:
-            if not await github.branch_exists(repo, branch):
-                step = "creating the branch"
-                await github.create_branch(repo, branch, BASE_BRANCH)
+            main_sha = await github.get_branch_sha(repo, BASE_BRANCH)
+            if main_sha != base_sha:
+                return BASE_MOVED.format(main=main_sha[:12], base=base_sha[:12])
+            step = "choosing a branch"
+            earlier: list[str] = []
+            chosen: str | None = None
+            for candidate in candidates:
+                if not await github.branch_exists(repo, candidate):
+                    chosen = candidate
+                    break
+                earlier.append(candidate)
+            if chosen is None:
+                return (
+                    f"REFUSED: branches {root} to {candidates[-1]} already exist; delete old "
+                    "ones before publishing again. Nothing was published."
+                )
+            branch = chosen
+            step = "looking up superseded pull requests"
+            superseded = [
+                url for b in earlier if (url := await github.find_open_pull_request(repo, b))
+            ]
+            if superseded:
+                supersedes = "\n".join(f"Supersedes {url}" for url in superseded)
+                pr_body = f"{pr_body}\n\n{supersedes}"
+            step = "creating the branch"
+            await github.create_branch(repo, branch, BASE_BRANCH)
             step = "pushing the files"
             await github.push_files(repo, branch, to_push, f"{key}: {pr_title[len(key) + 3 :]}")
-            step = "looking up an open pull request"
-            url = await github.find_open_pull_request(repo, branch)
-            if url:
-                step = "updating the pull request"
-                await github.update_pull_request(repo, url, pr_title, pr_body)
-                return url
             step = "creating the pull request"
-            return await github.create_pull_request(
+            url = await github.create_pull_request(
                 repo, branch, BASE_BRANCH, pr_title, pr_body, draft=draft
             )
         except Exception as e:  # GitHub/MCP error: report to the model, never raise
             return f"Publishing failed while {step} on {repo} ({branch}): {e}"
+        return Command(
+            update={
+                "approved_diff_hash": None,
+                "approved_ticket_key": None,
+                "messages": [ToolMessage(url, tool_call_id=tool_call_id)],
+            }
+        )
 
     return StructuredTool.from_function(coroutine=publish_pull_request, name="publish_pull_request")

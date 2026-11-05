@@ -39,10 +39,30 @@ def _ws(**kwargs) -> FakeWorkspace:
     return FakeWorkspace(**kwargs)
 
 
-async def _publish(ws, gh, state: dict | None = None, **overrides) -> str:
+APPROVED_STATE = {"approved_diff_hash": H, "approved_ticket_key": "SHIP-2"}
+
+
+async def _run(ws, gh, state: dict | None = None, **overrides):
+    """Invoke the tool as a model tool call; return (ToolMessage content, raw result)."""
     tool = make_publish_tool(ws, gh, settings_stub(shipwright_repo=REPO))
-    state = {"approved_diff_hash": H} if state is None else state
-    return await tool.ainvoke({**ARGS, **overrides, "state": state})
+    state = APPROVED_STATE if state is None else state
+    call = {
+        "type": "tool_call",
+        "id": "t1",
+        "name": "publish_pull_request",
+        "args": {**ARGS, **overrides, "state": state},
+    }
+    result = await tool.ainvoke(call)
+    if isinstance(result, Command):
+        (msg,) = result.update["messages"]
+        assert msg.tool_call_id == "t1"
+        return msg.content, result
+    assert isinstance(result, ToolMessage) and result.tool_call_id == "t1"
+    return result.content, result
+
+
+async def _publish(ws, gh, state: dict | None = None, **overrides) -> str:
+    return (await _run(ws, gh, state, **overrides))[0]
 
 
 def _nothing_written(gh: FakeGitHubGateway) -> bool:
@@ -132,26 +152,69 @@ async def test_publish_creates_branch_files_changelog_and_pr():
     assert (pr["repo"], pr["head"], pr["base"], pr["draft"]) == (REPO, BRANCH, "main", False)
 
 
-async def test_publish_reuses_existing_branch_and_pr():
+async def test_publish_never_reuses_an_existing_branch_and_supersedes_open_pr():
+    # R6: shipwright/ship-2 exists with an open PR -> fresh -r2 branch from main + NEW PR
     gh = FakeGitHubGateway(existing_branches={BRANCH}, open_prs={BRANCH: URL})
     out = await _publish(_ws(), gh)
-    assert out == URL
-    assert gh.branches == [] and gh.prs == []
-    assert len(gh.pushes) == 1 and gh.pushes[0][1] == BRANCH
-    assert gh.pr_updates == [
-        (
-            REPO,
-            URL,
-            "[SHIP-2] Export tasks as CSV",
-            "Linked ticket: SHIP-2\n\nImplements CSV export.",
-        )
-    ]
+    assert gh.branches == [(REPO, f"{BRANCH}-r2", "main")]
+    assert [p[1] for p in gh.pushes] == [f"{BRANCH}-r2"]
+    assert gh.pr_updates == []
+    (pr,) = gh.prs
+    assert pr["head"] == f"{BRANCH}-r2" and out == FAKE_PR_URL
+    assert pr["body"] == f"Linked ticket: SHIP-2\n\nImplements CSV export.\n\nSupersedes {URL}"
 
 
-async def test_publish_existing_branch_without_pr_creates_pr():
+async def test_publish_picks_first_free_revision_and_lists_all_open_prs():
+    old2 = "https://github.com/owner/taskboard-api/pull/8"
+    gh = FakeGitHubGateway(
+        existing_branches={BRANCH, f"{BRANCH}-r2"}, open_prs={BRANCH: URL, f"{BRANCH}-r2": old2}
+    )
+    await _publish(_ws(), gh)
+    assert gh.branches == [(REPO, f"{BRANCH}-r3", "main")]
+    assert gh.prs[0]["body"].endswith(f"Supersedes {URL}\nSupersedes {old2}")
+
+
+async def test_publish_existing_branch_without_open_pr_has_no_supersedes_line():
     gh = FakeGitHubGateway(existing_branches={BRANCH})
-    assert await _publish(_ws(), gh) == FAKE_PR_URL
-    assert gh.branches == [] and len(gh.prs) == 1
+    await _publish(_ws(), gh)
+    assert gh.branches == [(REPO, f"{BRANCH}-r2", "main")]
+    assert "Supersedes" not in gh.prs[0]["body"]
+
+
+async def test_publish_refuses_when_branch_revisions_exhausted():
+    existing = {BRANCH} | {f"{BRANCH}-r{n}" for n in range(2, 21)}
+    gh = FakeGitHubGateway(existing_branches=existing)
+    out = await _publish(_ws(), gh)
+    assert out.startswith("REFUSED") and f"{BRANCH}-r20" in out
+    assert _nothing_written(gh)
+
+
+async def test_publish_refuses_when_main_moved_since_clone():
+    gh = FakeGitHubGateway(branch_shas={"main": "e" * 40})
+    out = await _publish(_ws(), gh)
+    assert "main has moved since the workspace was cloned" in out
+    assert "fresh thread" in out and _nothing_written(gh)
+
+
+async def test_publish_proceeds_when_main_matches_workspace_base():
+    sha = "f" * 40
+    gh = FakeGitHubGateway(branch_shas={"main": sha})
+    assert await _publish(_ws(base=sha), gh) == FAKE_PR_URL
+
+
+async def test_publish_refuses_approval_for_another_ticket():
+    for approved_key in ("SHIP-3", None):
+        gh = FakeGitHubGateway()
+        state = {"approved_diff_hash": H, "approved_ticket_key": approved_key}
+        out = await _publish(_ws(), gh, state=state)
+        assert out.startswith("REFUSED") and "SHIP-2" in out and _nothing_written(gh)
+
+
+async def test_publish_consumes_approval_on_success():
+    content, result = await _run(_ws(), FakeGitHubGateway())
+    assert content == FAKE_PR_URL and isinstance(result, Command)
+    assert result.update["approved_diff_hash"] is None
+    assert result.update["approved_ticket_key"] is None
 
 
 async def test_publish_does_not_double_prefix_title_or_body():
@@ -272,13 +335,27 @@ async def test_gate_approval_flows_to_publish_through_graph_state():
     result = await graph.ainvoke(call("publish_pull_request", ARGS, "p0"), cfg)
     assert "not approved" in result["messages"][-1].content.lower() and gh.pushes == []
 
-    gate_args = {"summary": "s", "test_report": "ok", "review_report": "pass"}
-    await graph.ainvoke(call("request_human_review", gate_args, "g1"), cfg)
-    await graph.ainvoke(Command(resume={"type": "approve"}), cfg)
-    result = await graph.ainvoke(call("publish_pull_request", ARGS, "p1"), cfg)
+    gate_args = {"ticket_key": "SHIP-2", "summary": "s", "test_report": "ok", "review_report": "p"}
+    result = await graph.ainvoke(call("request_human_review", gate_args, "g1"), cfg)
+    shown_hash = result["__interrupt__"][0].value["diff_hash"]
+    await graph.ainvoke(Command(resume={"type": "approve", "diff_hash": shown_hash}), cfg)
+    values = (await graph.aget_state(cfg)).values
+    assert (values["approved_diff_hash"], values["approved_ticket_key"]) == (H, "SHIP-2")
+
+    # approval is bound to the ticket
+    other = {**ARGS, "ticket_key": "SHIP-3"}
+    result = await graph.ainvoke(call("publish_pull_request", other, "p1"), cfg)
+    assert result["messages"][-1].content.startswith("REFUSED") and gh.pushes == []
+
+    result = await graph.ainvoke(call("publish_pull_request", ARGS, "p2"), cfg)
     last = result["messages"][-1]
     assert isinstance(last, ToolMessage) and last.content == FAKE_PR_URL
     assert len(gh.prs) == 1
+    # the approval was consumed: publishing again is refused
+    values = (await graph.aget_state(cfg)).values
+    assert values["approved_diff_hash"] is None and values["approved_ticket_key"] is None
+    result = await graph.ainvoke(call("publish_pull_request", ARGS, "p3"), cfg)
+    assert "not approved" in result["messages"][-1].content.lower() and len(gh.prs) == 1
 
 
 async def test_publish_body_key_match_is_exact():

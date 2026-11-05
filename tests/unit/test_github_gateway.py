@@ -3,7 +3,7 @@ import json
 import pytest
 
 from shipwright.integrations.github import FileChange, McpGitHubGateway
-from tests.fakes import FakeGitHubGateway, FakeJiraGateway, FakeTool
+from tests.fakes import FAKE_BASE_SHA, FakeGitHubGateway, FakeJiraGateway, FakeTool
 
 REPO = "acme/taskboard-api"
 PR_URL = "https://github.com/acme/taskboard-api/pull/9"
@@ -151,3 +151,22 @@ async def test_branch_exists_raises_when_too_many_branches():
     gw = McpGitHubGateway(tools={"list_branches": tool})
     with pytest.raises(RuntimeError):
         await gw.branch_exists(REPO, "missing")
+
+
+async def test_get_branch_sha_reads_commit_sha_from_list_branches():
+    sha = "c" * 40
+    tool = FakeTool(
+        result=json.dumps([{"name": "feat/x"}, {"name": "main", "commit": {"sha": sha}}])
+    )
+    gw = McpGitHubGateway(tools={"list_branches": tool})
+    assert await gw.get_branch_sha(REPO, "main") == sha
+    with pytest.raises(RuntimeError, match="not found"):
+        await gw.get_branch_sha(REPO, "nope")
+    with pytest.raises(RuntimeError, match="no commit sha"):
+        await gw.get_branch_sha(REPO, "feat/x")
+
+
+async def test_fake_get_branch_sha_is_configurable():
+    gh = FakeGitHubGateway(branch_shas={"main": "d" * 40})
+    assert await gh.get_branch_sha(REPO, "main") == "d" * 40
+    assert await FakeGitHubGateway().get_branch_sha(REPO, "main") == FAKE_BASE_SHA

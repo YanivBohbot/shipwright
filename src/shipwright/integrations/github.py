@@ -36,6 +36,7 @@ class GitHubGateway(Protocol):
         self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> str: ...
     async def branch_exists(self, repo: str, branch: str) -> bool: ...
+    async def get_branch_sha(self, repo: str, branch: str) -> str: ...
     async def find_open_pull_request(self, repo: str, head: str) -> str | None: ...
     async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None: ...
 
@@ -145,21 +146,39 @@ class McpGitHubGateway:
             raise RuntimeError(f"GitHub did not return a pull request URL: {data!r}")
         return str(url)
 
-    async def branch_exists(self, repo: str, branch: str) -> bool:
+    async def _find_branch(self, repo: str, branch: str) -> dict[str, Any] | None:
         owner, name = _split_repo(repo)
         for page in range(1, _MAX_PAGES + 1):
             data = await self._call(
                 TOOL_LIST_BRANCHES, owner=owner, repo=name, page=page, perPage=_PAGE_SIZE
             )
             items = _as_list(data)
-            if any(isinstance(b, dict) and b.get("name") == branch for b in items):
-                return True
+            found = next(
+                (b for b in items if isinstance(b, dict) and b.get("name") == branch), None
+            )
+            if found is not None:
+                return found
             if len(items) < _PAGE_SIZE:
-                return False
+                return None
         raise RuntimeError(
-            f"branch_exists gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}; "
-            "cannot determine whether the branch exists"
+            f"branch lookup gave up after {_MAX_PAGES * _PAGE_SIZE} branches in {repo}; "
+            f"cannot determine whether branch {branch!r} exists"
         )
+
+    async def branch_exists(self, repo: str, branch: str) -> bool:
+        return await self._find_branch(repo, branch) is not None
+
+    async def get_branch_sha(self, repo: str, branch: str) -> str:
+        """Head commit sha of `branch` (from the `list_branches` item's `commit.sha`)."""
+        item = await self._find_branch(repo, branch)
+        if item is None:
+            raise RuntimeError(f"Branch {branch!r} not found in {repo}")
+        commit = item.get("commit")
+        sha = commit.get("sha") if isinstance(commit, dict) else None
+        sha = sha or _find_key(item, "sha")
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise RuntimeError(f"GitHub returned no commit sha for branch {branch!r}: {item!r}")
+        return sha
 
     async def find_open_pull_request(self, repo: str, head: str) -> str | None:
         owner, name = _split_repo(repo)

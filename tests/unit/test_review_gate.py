@@ -11,13 +11,18 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 
 from shipwright.context import ShipwrightState
-from shipwright.tools.review_gate import make_review_gate_tool, parse_review_decision
+from shipwright.tools.review_gate import STALE, make_review_gate_tool, parse_review_decision
 from shipwright.workspace import WorkspaceError
 from tests.fakes import FakeWorkspace
 
 DIFF = "diff --git a/app/a.py b/app/a.py\n+fixed\n"
 H = hashlib.sha256(DIFF.encode()).hexdigest()
-ARGS = {"summary": "Fix 500 on empty title", "test_report": "12 passed", "review_report": "pass"}
+ARGS = {
+    "ticket_key": "ship-2",
+    "summary": "Fix 500 on empty title",
+    "test_report": "12 passed",
+    "review_report": "pass",
+}
 
 
 def _graph(tools: list):
@@ -61,6 +66,7 @@ async def test_review_gate_interrupt_payload():
     (intr,) = result["__interrupt__"]
     assert intr.value == {
         "kind": "review_gate",
+        "ticket_key": "SHIP-2",
         "summary": ARGS["summary"],
         "diff": DIFF,
         "diff_hash": H,
@@ -72,9 +78,10 @@ async def test_review_gate_interrupt_payload():
 
 async def test_review_gate_approve_sets_hash():
     graph, cfg, _ = await _start(FakeWorkspace(diff=DIFF))
-    result = await graph.ainvoke(Command(resume={"type": "approve"}), cfg)
+    result = await graph.ainvoke(Command(resume={"type": "approve", "diff_hash": H}), cfg)
     assert result["approved_diff_hash"] == H
-    assert (await graph.aget_state(cfg)).values["approved_diff_hash"] == H
+    values = (await graph.aget_state(cfg)).values
+    assert values["approved_diff_hash"] == H and values["approved_ticket_key"] == "SHIP-2"
     assert "APPROVED" in _last_tool_message(result).content
 
 
@@ -100,8 +107,32 @@ async def test_review_gate_reject_clears_hash():
 
 async def test_review_gate_accepts_hitl_decisions_wrapper():
     graph, cfg, _ = await _start(FakeWorkspace(diff=DIFF))
-    result = await graph.ainvoke(Command(resume={"decisions": [{"type": "approve"}]}), cfg)
+    resume = {"decisions": [{"type": "approve", "diff_hash": H}]}
+    result = await graph.ainvoke(Command(resume=resume), cfg)
     assert result["approved_diff_hash"] == H
+
+
+async def test_review_gate_refuses_approval_when_diff_changed_during_review():
+    # first execution shows H; on resume the recomputed hash differs (parallel tool call)
+    graph, cfg, _ = await _start(FakeWorkspace(diff=DIFF, hashes=[H, "changed"]))
+    result = await graph.ainvoke(Command(resume={"type": "approve", "diff_hash": H}), cfg)
+    assert result.get("approved_diff_hash") is None
+    assert result.get("approved_ticket_key") is None
+    assert _last_tool_message(result).content == STALE
+
+
+async def test_review_gate_approve_without_echoed_hash_raises_even_if_tree_changed():
+    graph, cfg, _ = await _start(FakeWorkspace(diff=DIFF, hashes=[H, "changed"]))
+    with pytest.raises(ValueError, match="approve requires diff_hash"):
+        await graph.ainvoke(Command(resume={"type": "approve"}), cfg)
+    assert (await graph.aget_state(cfg)).values.get("approved_diff_hash") is None
+
+
+async def test_review_gate_rejects_invalid_ticket_key_without_interrupt():
+    graph, cfg = _graph([make_review_gate_tool(FakeWorkspace(diff=DIFF))]), _cfg()
+    result = await graph.ainvoke(_call("request_human_review", {**ARGS, "ticket_key": "x"}), cfg)
+    assert "__interrupt__" not in result
+    assert _last_tool_message(result).content == "Ticket x not found in project SHIP."
 
 
 async def test_review_gate_invalid_resume_payload_raises():
@@ -132,12 +163,14 @@ async def test_review_gate_reports_workspace_error_as_text():
     [
         "approve",
         None,
+        {"type": "approve"},
+        {"type": "approve", "diff_hash": ""},
         {"type": "merge"},
         {"type": "feedback"},
         {"type": "feedback", "message": "   "},
         {"type": "reject", "message": 3},
         {"decisions": []},
-        {"decisions": [{"type": "approve"}, {"type": "approve"}]},
+        {"decisions": [{"type": "reject"}, {"type": "reject"}]},
         [],
     ],
 )
@@ -147,7 +180,6 @@ def test_parse_review_decision_rejects_invalid(payload):
 
 
 def test_parse_review_decision_shapes():
-    assert parse_review_decision({"type": "approve"}) == ("approve", "", None)
     assert parse_review_decision([{"type": "reject", "message": "no"}]) == ("reject", "no", None)
     assert parse_review_decision({"decisions": [{"type": "feedback", "message": " x "}]}) == (
         "feedback",

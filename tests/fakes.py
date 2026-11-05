@@ -151,16 +151,21 @@ class FakeJiraGateway:
 
 
 FAKE_PR_URL = "https://github.com/fake/repo/pull/1"
+FAKE_BASE_SHA = "b" * 40  # default head sha of every fake branch and fake workspace base
 
 
 class FakeGitHubGateway:
     """In-memory GitHubGateway recording writes. `open_prs` maps head branch -> PR URL."""
 
     def __init__(
-        self, existing_branches: Iterable[str] = (), open_prs: dict[str, str] | None = None
+        self,
+        existing_branches: Iterable[str] = (),
+        open_prs: dict[str, str] | None = None,
+        branch_shas: dict[str, str] | None = None,
     ) -> None:
         self.existing_branches = set(existing_branches)
         self.open_prs = dict(open_prs or {})
+        self.branch_shas = dict(branch_shas or {})  # branch -> head sha (default FAKE_BASE_SHA)
         self.branches: list[tuple[str, str, str]] = []
         self.pushes: list[tuple[str, str, list[FileChange], str]] = []
         self.prs: list[dict[str, Any]] = []
@@ -182,11 +187,15 @@ class FakeGitHubGateway:
         self.prs.append(
             {"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft}
         )
-        self.open_prs[head] = FAKE_PR_URL
-        return FAKE_PR_URL
+        url = FAKE_PR_URL if not self.prs[:-1] else f"{FAKE_PR_URL[:-1]}{len(self.prs)}"
+        self.open_prs[head] = url
+        return url
 
     async def branch_exists(self, repo: str, branch: str) -> bool:
         return branch in self.existing_branches
+
+    async def get_branch_sha(self, repo: str, branch: str) -> str:
+        return self.branch_shas.get(branch, FAKE_BASE_SHA)
 
     async def find_open_pull_request(self, repo: str, head: str) -> str | None:
         return self.open_prs.get(head)
@@ -328,7 +337,9 @@ class FakeWorkspace:
         files: list[FileChange] | None = None,
         repo_files: dict[str, str] | None = None,
         hashes: list[str] | None = None,
+        base: str = FAKE_BASE_SHA,
     ) -> None:
+        self.base = base
         self.diff_text = diff
         self.files = list(files or [])
         self.repo_files = dict(repo_files or {})
@@ -351,6 +362,10 @@ class FakeWorkspace:
     async def diff_and_hash(self) -> tuple[str, str]:
         self.calls.append("diff_and_hash")
         return self.diff_text, self._hash()
+
+    async def base_sha(self) -> str:
+        self.calls.append("base_sha")
+        return self.base
 
     async def changed_files(self) -> list[FileChange]:
         self.calls.append("changed_files")
