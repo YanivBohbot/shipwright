@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pinecone import Pinecone, ServerlessSpec
 
-from shipwright.config import Settings, get_settings
+from shipwright.core.config import Settings, get_settings
 from shipwright.knowledge.ingest import (
     EMBEDDING_DIMENSION,
     build_vector_store,

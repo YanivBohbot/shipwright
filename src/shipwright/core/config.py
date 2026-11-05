@@ -14,6 +14,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_REPO = "local/taskboard-api"  # `owner/name` used for the demo repo in local mode
+# Base URL of ticket links in local mode (reserved `.invalid` TLD: clearly not a real site).
+LOCAL_JIRA_URL = "https://jira.local.invalid"
 
 _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 _LIVE_REQUIRED = (
@@ -85,6 +87,8 @@ class Settings(BaseSettings):
     @field_validator("shipwright_repo")
     @classmethod
     def _validate_repo(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            return None  # `SHIPWRIGHT_REPO=` placeholder in .env = not set
         if v is not None and not _REPO_RE.match(v):
             raise ValueError("shipwright_repo must have the format 'owner/name'")
         return v
@@ -106,6 +110,11 @@ class Settings(BaseSettings):
     def repo(self) -> str:
         """The target repo: `shipwright_repo` in live mode, the local demo repo otherwise."""
         return self.shipwright_repo or LOCAL_REPO
+
+    @property
+    def jira_base_url(self) -> str:
+        """Base of ticket links (`{base}/browse/SHIP-1`): JIRA_URL, else the local placeholder."""
+        return (self.jira_url or LOCAL_JIRA_URL).rstrip("/")
 
     # Local-mode files, all under `demo_dir` (gitignored except tickets.yaml and the source repo).
     @property

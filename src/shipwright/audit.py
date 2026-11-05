@@ -5,6 +5,7 @@ The middleware that produces events lives with the agent.
 """
 
 import asyncio
+import functools
 import json
 import re
 from dataclasses import asdict, dataclass
@@ -89,9 +90,15 @@ class MongoAuditSink:
         await self.collection.insert_one(asdict(event))
 
 
+@functools.cache
+def _shared_mongo_sink(uri: str, db: str) -> MongoAuditSink:
+    """One sink (one lazily created Mongo client) per process: the graph factory runs per run."""
+    return MongoAuditSink(uri, db)
+
+
 def build_audit_sink(settings: Settings) -> AuditSink:
     if settings.mode == "local":
         return JsonlAuditSink(settings.tmp_dir / "audit.jsonl")
     if settings.mongodb_uri is None:
         raise ValueError("MONGODB_URI is required for the live audit log")
-    return MongoAuditSink(settings.mongodb_uri.get_secret_value(), settings.mongodb_db)
+    return _shared_mongo_sink(settings.mongodb_uri.get_secret_value(), settings.mongodb_db)

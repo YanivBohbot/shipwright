@@ -1,43 +1,32 @@
-"""Graph factory for `langgraph.json` (LangSmith Deployment / `langgraph dev`).
+"""LangGraph Server entry point (`langgraph.json` -> `make_graph`): `langgraph dev` / deployment.
 
-Verified against langgraph-api 0.17.1 (`_factory_utils._classify_factory`, `graph.get_graph`):
-a one-parameter factory not annotated `ServerRuntime` receives the run's `RunnableConfig`; a
-coroutine result is awaited. The factory is called for EVERY access (runs, but also state reads,
-assistant/schema reads), with `configurable["__is_for_execution__"]` True only for
-`threads.create_run`. The platform injects its own checkpointer and store into the returned
-graph, so none are passed here.
+Verified against langgraph-api: a one-parameter factory receives the run's `RunnableConfig`
+and may be async. It is called for EVERY access (runs, state reads, schema reads), with
+`configurable["__is_for_execution__"]` True only for runs. The platform injects its own
+checkpointer and store, so none are passed.
 
-Without a `thread_id` (schema loading in Studio) or for a non-execution access, a schema-only
-graph is built: same structure, a workspace that is never cloned (no sandbox is created) and
-stub services that refuse any call (no MCP / Pinecone connection).
+Without a `thread_id` (Studio loading the schema) or for a non-execution access, a
+schema-only graph is built: same structure, a workspace that is never cloned (no sandbox is
+created) and services that refuse every call (no MCP / Pinecone connection).
 """
 
-from __future__ import annotations
-
-import functools
 from typing import Any
 
 from deepagents.backends import StateBackend
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 
-from shipwright.agent import Dependencies, build_agent
-from shipwright.config import Settings, get_settings
-from shipwright.integrations.github import McpGitHubGateway
-from shipwright.integrations.jira import McpJiraGateway
-from shipwright.integrations.mcp_client import load_mcp_tools
-from shipwright.knowledge.ingest import build_vector_store
-from shipwright.knowledge.search import KnowledgeSearcher
-from shipwright.middleware.audit import MemoryAuditSink, MongoAuditSink
-from shipwright.tools.research import make_web_search_tool
-from shipwright.workspace import Workspace, open_workspace
+from shipwright.agent.dependencies import Dependencies, build_dependencies
+from shipwright.agent.orchestrator import build_shipwright_agent
+from shipwright.core.config import Settings, get_settings
+from shipwright.sandbox.workspace import Workspace
 
 SCHEMA_ONLY_ERROR = "schema-only Shipwright graph: no service is connected (no thread_id)"
 
 
-class _SchemaOnlyService:
-    """Stand-in for Jira/GitHub/knowledge services in a schema-only graph: refuses every call."""
+class _Refuse:
+    """Stand-in for Jira / GitHub / knowledge in a schema-only graph: every call raises."""
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):  # copy/pickle/introspection probes
@@ -58,53 +47,30 @@ def _refuse_web_search(query: str) -> str:
     raise RuntimeError(SCHEMA_ONLY_ERROR)
 
 
-def schema_only_dependencies() -> Dependencies:
-    service: Any = _SchemaOnlyService()
-    web_tool: BaseTool = StructuredTool.from_function(func=_refuse_web_search, name="web_search")
+def schema_only_dependencies(settings: Settings, repo: str) -> Dependencies:
+    service: Any = _Refuse()
     return Dependencies(
+        settings=settings,
+        workspace=Workspace(StateBackend(), repo, "schema-only://never-cloned"),
         jira=service,
         github=service,
         searcher=service,
-        web_tool=web_tool,
-        audit_sink=MemoryAuditSink(),
+        web_tool=StructuredTool.from_function(func=_refuse_web_search, name="web_search"),
+        audit_sink=service,
+        model=settings.model_strong,
     )
-
-
-async def build_live_dependencies(settings: Settings) -> Dependencies:
-    """Real services: MCP gateways (raw MCP tools stay inside them), Pinecone, Tavily, Mongo."""
-    mcp = await load_mcp_tools(settings)
-    return Dependencies(
-        jira=McpJiraGateway(mcp["atlassian"]),
-        github=McpGitHubGateway(mcp["github"]),
-        searcher=KnowledgeSearcher(build_vector_store(settings)),
-        web_tool=make_web_search_tool(settings),
-        audit_sink=shared_audit_sink(settings.mongodb_uri.get_secret_value(), settings.mongodb_db),
-    )
-
-
-@functools.cache
-def shared_audit_sink(uri: str, db: str) -> MongoAuditSink:
-    """One audit sink (hence one lazily created AsyncMongoClient) per process, not per run.
-
-    The factory runs for every execution on a long-lived Agent Server; a sink per run would
-    leak one never-closed client (connection pool + monitor tasks) each time.
-    """
-    return MongoAuditSink(uri, db)
 
 
 async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
-    """Build the Shipwright graph for one run (entry point of `langgraph.json`)."""
+    """Build the Shipwright graph for one run of the LangGraph Server."""
     settings = get_settings()
     configurable = (config or {}).get("configurable") or {}
     thread_id = configurable.get("thread_id")
-    repo = configurable.get("repo") or settings.shipwright_repo
-    if not thread_id and configurable.get("__is_for_execution__") is True:
+    repo = configurable.get("repo") or settings.repo
+    executing = configurable.get("__is_for_execution__")
+    if not thread_id and executing is True:
         raise ValueError("Shipwright runs require a thread (stateless runs are not supported).")
-    if not thread_id or configurable.get("__is_for_execution__") is False:
-        workspace = Workspace(StateBackend(), repo)  # never cloned: no sandbox exists
-        return build_agent(settings, schema_only_dependencies(), workspace)
-
-    workspace = await open_workspace(settings, thread_id=str(thread_id), repo=repo)
-    await workspace.ensure_cloned()
-    deps = await build_live_dependencies(settings)
-    return build_agent(settings, deps, workspace)
+    if not thread_id or executing is False:
+        return build_shipwright_agent(schema_only_dependencies(settings, repo))
+    deps = await build_dependencies(settings, thread_id=str(thread_id), repo=repo)
+    return build_shipwright_agent(deps)

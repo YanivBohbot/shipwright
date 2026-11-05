@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-shipwright = "shipwright.cli:main"
+shipwright = "shipwright.main:main"
 
 [build-system]
 requires = ["hatchling"]

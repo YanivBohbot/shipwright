@@ -163,18 +163,22 @@ class Workspace(SandboxShell):
             raise WorkspaceError("Files differ from the approved diff: " + "; ".join(problems))
         return files
 
-    async def read_repo_file(self, rel_path: str) -> str | None:
-        """UTF-8 content of a repo file (relative, `/`-separated), or None if it does not exist."""
+    async def read_base_file(self, rel_path: str) -> str | None:
+        """UTF-8 content of a file at the BASE commit (never the worktree), None if absent there.
+
+        Publishing reads unchanged files (CHANGELOG.md) from here: a worktree file hidden from
+        the diff (assume-unchanged, clean filter) can never reach the push this way.
+        """
         parts = rel_path.replace("\\", "/").split("/")
-        bad = any(p in ("", ".", "..") for p in parts) or ":" in parts[0]
+        bad = any(p in ("", ".", "..") for p in parts) or ":" in rel_path
         if not rel_path or rel_path.startswith(("/", "\\")) or bad:
             raise ValueError(f"Invalid repo-relative path: {rel_path!r}")
-        (resp,) = await self.backend.adownload_files([f"{REPO_DIR}/{'/'.join(parts)}"])
-        if resp.error == "file_not_found":
+        path, sha = "/".join(parts), await self.base_sha()
+        listed = await self._capture_git(f"ls-tree --name-only {sha} -- {q(path)}", "ls-tree")
+        if not listed.strip():
             return None
-        if resp.error is not None or resp.content is None:  # never "absent" on other errors
-            raise WorkspaceError(f"Repo file could not be read: {rel_path} ({resp.error})")
+        data = await self._capture_git(f"cat-file blob {q(f'{sha}:{path}')}", "base-file")
         try:
-            return resp.content.decode("utf-8")
+            return data.decode("utf-8")
         except UnicodeDecodeError as e:
-            raise WorkspaceError(f"Repo file is not UTF-8 text: {rel_path}") from e
+            raise WorkspaceError(f"Base file is not UTF-8 text: {rel_path}") from e
