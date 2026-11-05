@@ -291,6 +291,37 @@ class Workspace:
         """sha256 hex of the exact diff bytes git produced."""
         return hashlib.sha256(await self._diff_bytes()).hexdigest()
 
+    async def diff_and_hash(self) -> tuple[str, str]:
+        """`(diff(), diff_hash())` computed from ONE git read, so the hash matches the text."""
+        raw = await self._diff_bytes()
+        return raw.decode("utf-8", errors="replace"), hashlib.sha256(raw).hexdigest()
+
+    async def read_repo_file(self, rel_path: str) -> str | None:
+        """UTF-8 content of a file of the repo working tree, or None if it does not exist.
+
+        `rel_path` is relative to the repo root (`/`-separated); absolute paths and `..` are
+        rejected with ValueError.
+        """
+        parts = rel_path.replace("\\", "/").split("/")
+        if (
+            not rel_path
+            or rel_path.startswith(("/", "\\"))
+            or ":" in parts[0]
+            or any(p in ("", ".", "..") for p in parts)
+        ):
+            raise ValueError(f"Invalid repo-relative path: {rel_path!r}")
+        (resp,) = await self.backend.adownload_files([f"{REPO_DIR}/{'/'.join(parts)}"])
+        if resp.error == "file_not_found":
+            return None
+        if resp.error is not None or resp.content is None:
+            # never report "absent" on other errors: the caller would overwrite the file
+            raise WorkspaceError(f"Repo file could not be read: {rel_path} ({resp.error})")
+        data = resp.content
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise WorkspaceError(f"Repo file is not UTF-8 text: {rel_path}") from e
+
     async def changed_files(self) -> list[FileChange]:
         """Individual changed files vs the base SHA (ignored files excluded), sorted by path.
 

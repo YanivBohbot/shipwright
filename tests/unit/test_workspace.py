@@ -407,3 +407,45 @@ async def test_local_git_sees_no_user_global_or_system_config(real_ws):
     assert str(Path.home() / ".gitconfig") not in origins
     assert "credential.helper" not in origins
     assert sorted(p.name for p in (repo.parent / ".shipwright").iterdir()) == ["base_sha"]
+
+
+# ---------------------------------------------------------------- Task 10 helpers
+
+
+async def test_diff_and_hash_come_from_one_git_read():
+    patch = b"diff --git a/app/a.py b/app/a.py\n+caf\xc3\xa9 \xff\n"
+    sb = _cloned_sandbox()
+    sb.on("diff --no-color", redirect=patch)
+    diff, digest = await _fake_ws(sb).diff_and_hash()
+    assert diff == patch.decode("utf-8", errors="replace")
+    assert digest == hashlib.sha256(patch).hexdigest()  # raw bytes, not the decoded text
+    assert sb.count("diff --no-color") == 1
+
+
+async def test_read_repo_file():
+    sb = _cloned_sandbox()
+    sb.files[f"{REPO_DIR}/CHANGELOG.md"] = b"# Changelog\n"
+    sb.files[f"{REPO_DIR}/bin.dat"] = b"\xff\xfe"
+    ws = _fake_ws(sb)
+    assert await ws.read_repo_file("CHANGELOG.md") == "# Changelog\n"
+    assert await ws.read_repo_file("missing.md") is None
+    with pytest.raises(WorkspaceError):
+        await ws.read_repo_file("bin.dat")
+    for bad in ("/etc/passwd", "../.shipwright/base_sha", "a/../../x", "", "C:/x", r"a\..\..\x"):
+        with pytest.raises(ValueError):
+            await ws.read_repo_file(bad)
+
+
+async def test_read_repo_file_raises_on_non_missing_errors():
+    from deepagents.backends.protocol import FileDownloadResponse
+
+    sb = _cloned_sandbox()
+
+    async def denied(paths):
+        return [
+            FileDownloadResponse(path=p, content=None, error="permission_denied") for p in paths
+        ]
+
+    sb.adownload_files = denied
+    with pytest.raises(WorkspaceError, match="permission_denied"):
+        await _fake_ws(sb).read_repo_file("CHANGELOG.md")

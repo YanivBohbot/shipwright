@@ -1,5 +1,6 @@
 """Reusable test doubles (no network)."""
 
+import hashlib
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -312,3 +313,49 @@ class FakeSandboxClient:
     def delete_sandbox(self, name: str) -> None:
         self.deleted.append(name)
         self.sandboxes = [s for s in self.sandboxes if s.name != name]
+
+
+class FakeWorkspace:
+    """Duck-typed Workspace: a fixed diff, changed files and repo files.
+
+    `hashes`, when given, is the sequence returned by successive `diff_hash()` calls (the last
+    value repeats) - used to simulate the tree changing between two reads.
+    """
+
+    def __init__(
+        self,
+        diff: str = "",
+        files: list[FileChange] | None = None,
+        repo_files: dict[str, str] | None = None,
+        hashes: list[str] | None = None,
+    ) -> None:
+        self.diff_text = diff
+        self.files = list(files or [])
+        self.repo_files = dict(repo_files or {})
+        self.hashes = list(hashes or [])
+        self.calls: list[str] = []
+
+    def _hash(self) -> str:
+        if self.hashes:
+            return self.hashes.pop(0) if len(self.hashes) > 1 else self.hashes[0]
+        return hashlib.sha256(self.diff_text.encode()).hexdigest()
+
+    async def diff(self) -> str:
+        self.calls.append("diff")
+        return self.diff_text
+
+    async def diff_hash(self) -> str:
+        self.calls.append("diff_hash")
+        return self._hash()
+
+    async def diff_and_hash(self) -> tuple[str, str]:
+        self.calls.append("diff_and_hash")
+        return self.diff_text, self._hash()
+
+    async def changed_files(self) -> list[FileChange]:
+        self.calls.append("changed_files")
+        return list(self.files)
+
+    async def read_repo_file(self, rel_path: str) -> str | None:
+        self.calls.append(f"read:{rel_path}")
+        return self.repo_files.get(rel_path)
