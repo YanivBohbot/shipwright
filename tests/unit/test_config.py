@@ -50,6 +50,24 @@ def test_secrets_not_in_repr(monkeypatch):
     assert REQUIRED_ENV["GITHUB_PAT"] not in str(s)
 
 
+@pytest.mark.parametrize("name", ["LANGSMITH_API_KEY", "SHIPWRIGHT_LANGSMITH_API_KEY"])
+def test_langsmith_key_accepts_either_env_name(monkeypatch, name):
+    _set_env(monkeypatch)
+    monkeypatch.delenv("LANGSMITH_API_KEY")
+    monkeypatch.setenv(name, "ls-either")
+    s = Settings(_env_file=None)
+    assert s.langsmith_api_key.get_secret_value() == "ls-either"
+    assert "ls-either" not in repr(s)
+
+
+def test_langsmith_key_missing_fails(monkeypatch):
+    _set_env(monkeypatch)
+    monkeypatch.delenv("LANGSMITH_API_KEY")
+    monkeypatch.delenv("SHIPWRIGHT_LANGSMITH_API_KEY", raising=False)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
 def test_get_settings_is_cached(monkeypatch):
     _set_env(monkeypatch)
     get_settings.cache_clear()

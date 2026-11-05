@@ -30,19 +30,21 @@ TOOL_GET_ISSUE = "jira_get_issue"
 async def verify_live(key: str) -> bool:
     from shipwright.config import get_settings
     from shipwright.integrations.github import McpGitHubGateway
-    from shipwright.integrations.jira import McpJiraGateway
     from shipwright.integrations.mcp_client import invoke_mcp_tool, load_mcp_tools
+    from shipwright.tickets import Ticket
 
     settings = get_settings()
     tools = await load_mcp_tools(settings)
-    jira = McpJiraGateway(tools["atlassian"])
     github = McpGitHubGateway(tools["github"])
-    ticket = await jira.get_issue(key)
-    # mcp-atlassian returns the latest comments inside jira_get_issue (comment_limit); the exact
-    # result shape is to be confirmed on the first live run.
+    # ONE Jira round trip: mcp-atlassian returns the latest comments inside jira_get_issue
+    # (comment_limit). The result shape (status as str or {"name": ...}, `comments`) is
+    # live-unverified; confirm it on the first live run.
     issue = await invoke_mcp_tool(
         tools["atlassian"][TOOL_GET_ISSUE], {"issue_key": key, "comment_limit": 20}
     )
+    status = issue.get("status") if isinstance(issue, dict) else None
+    status = status.get("name") if isinstance(status, dict) else status
+    ticket = Ticket(key, "", "", str(status or ""), [], [], "")
     report = await verify_outcome(github, settings.shipwright_repo, ticket, comment_bodies(issue))
     print(f"\nTicket {key}: status {report.status!r}")
     print(f"PR: {report.pr_url or 'NOT FOUND'} (branch {report.branch})")

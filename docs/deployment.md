@@ -35,7 +35,7 @@ All variables of `.env.example` (they are the fields of `shipwright.config.Setti
 | Variable | Required | Note |
 |---|---|---|
 | `OPENAI_API_KEY`, `MODEL_STRONG`, `MODEL_LIGHT` | yes | `MODEL_LIGHT` has no default |
-| `LANGSMITH_API_KEY` | yes (Settings) | reserved by the platform: `langgraph deploy` does not upload it. `Settings` requires it, so check on first deploy that the platform provides it; if not, set it in the deployment UI |
+| `LANGSMITH_API_KEY` / `SHIPWRIGHT_LANGSMITH_API_KEY` | one of them | `LANGSMITH_API_KEY` is reserved by the platform: `langgraph deploy` does not upload it. `Settings` accepts either name, so if the platform does not inject `LANGSMITH_API_KEY` into the graph, set `SHIPWRIGHT_LANGSMITH_API_KEY` as a deployment secret (same value; add it to `.env` before `deploy`) |
 | `LANGSMITH_TRACING`, `LANGSMITH_PROJECT` | optional | `LANGSMITH_PROJECT` is reserved (set by the platform) |
 | `MONGODB_URI`, `MONGODB_DB` | yes | audit log + Settings; also the fallback for the checkpointer URI |
 | `LS_MONGODB_URI` | yes | same Atlas URI **including the database name**; used by the Mongo checkpointer |
@@ -80,6 +80,6 @@ Other useful flags of `deploy`: `--deployment-id` (update an existing deployment
    `user_id` in the run context (`{"user_id": "demo", "jira_project": "SHIP"}`).
 2. Replay scenario 2 as in `docs/demo-guide.md`; expected: PR on the demo repo, Jira comment and
    `In Review`.
-3. In Atlas, check the checkpointer collections of `MONGODB_DB` receive documents and `audit_log`
+3. In Atlas, check the checkpointer collections receive documents (the langgraph-checkpoint-mongodb defaults are `checkpoints` and `checkpoint_writes`; the Agent Server may use its own names or database, so also look at the database in `LS_MONGODB_URI`) and that `audit_log` in `MONGODB_DB`
    contains the `request_human_review`, `publish_pull_request` and `update_jira_ticket` events.
 4. Check `/policies/POLICIES.md` is readable in a run (the policy seed middleware wrote it).

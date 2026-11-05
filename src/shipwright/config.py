@@ -4,20 +4,26 @@ import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="", extra="ignore", populate_by_name=True
+    )
 
     openai_api_key: SecretStr
     model_strong: str = "openai:gpt-5.5"
     model_light: str
 
-    langsmith_api_key: SecretStr
+    # LANGSMITH_API_KEY is reserved by `langgraph deploy` (not uploaded to the deployment):
+    # on a deployment, set SHIPWRIGHT_LANGSMITH_API_KEY instead.
+    langsmith_api_key: SecretStr = Field(
+        validation_alias=AliasChoices("LANGSMITH_API_KEY", "SHIPWRIGHT_LANGSMITH_API_KEY")
+    )
 
     mongodb_uri: SecretStr
     mongodb_db: str = "shipwright"
