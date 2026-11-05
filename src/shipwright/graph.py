@@ -87,6 +87,8 @@ async def make_graph(config: RunnableConfig) -> CompiledStateGraph:
     configurable = (config or {}).get("configurable") or {}
     thread_id = configurable.get("thread_id")
     repo = configurable.get("repo") or settings.shipwright_repo
+    if not thread_id and configurable.get("__is_for_execution__") is True:
+        raise ValueError("Shipwright runs require a thread (stateless runs are not supported).")
     if not thread_id or configurable.get("__is_for_execution__") is False:
         workspace = Workspace(StateBackend(), repo)  # never cloned: no sandbox exists
         return build_agent(settings, schema_only_dependencies(), workspace)

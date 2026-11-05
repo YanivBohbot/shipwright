@@ -309,6 +309,11 @@ async def test_make_graph_without_thread_id_creates_no_sandbox(no_live, spy, con
     assert kw["state_schema"] is ShipwrightState and kw["skills"] == ["/skills/"]
 
 
+async def test_make_graph_refuses_threadless_execution(no_live):
+    with pytest.raises(ValueError, match="require a thread"):
+        await graph_mod.make_graph({"configurable": {"__is_for_execution__": True}})
+
+
 async def test_make_graph_with_thread_builds_live_graph(monkeypatch, spy):
     settings = settings_stub()
     opened: list[dict[str, Any]] = []

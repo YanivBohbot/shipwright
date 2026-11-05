@@ -82,9 +82,12 @@ def make_review_gate_tool(workspace: Workspace, jira_project: str = "SHIP") -> B
     ) -> Command:
         """Ask the human to review the exact current diff before anything is published.
 
-        Call this only when the tests pass and the reviewer subagent has reported. The
-        human sees the full diff, your summary, the test report and the review report, and
-        answers approve / feedback / reject. On approval the exact diff and the ticket key
+        Normally call this once the tests pass and the reviewer subagent has reported. If
+        the tests still fail after the developer's attempts, call it anyway and say that the
+        tests are FAILING explicitly in `summary` and `test_report` (the human may then
+        approve a draft PR, give a hint, or reject). The human sees the full diff, your
+        summary, the test report and the review report, and answers approve / feedback /
+        reject. On approval the exact diff and the ticket key
         are recorded and publish_pull_request becomes possible for that ticket; ANY later
         change to the working tree voids the approval. On feedback, relay it to the
         developer and call this tool again. On reject, stop working on the ticket.
