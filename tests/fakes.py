@@ -13,7 +13,9 @@ from deepagents.backends.protocol import (
 )
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_core.messages import ToolMessage
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from langchain_core.vectorstores import VectorStore
 
 from shipwright.config import Settings
@@ -395,3 +397,41 @@ class FakeWorkspace:
     async def read_repo_file(self, rel_path: str) -> str | None:
         self.calls.append(f"read:{rel_path}")
         return self.repo_files.get(rel_path)
+
+
+class ScriptedChatModel(GenericFakeChatModel):
+    """GenericFakeChatModel that accepts `bind_tools` (returns itself)."""
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "ScriptedChatModel":  # type: ignore[override]
+        return self
+
+
+class RecordingChatModel(ScriptedChatModel):
+    """ScriptedChatModel remembering every message list it was called with (`seen`)."""
+
+    seen: list[list[BaseMessage]] = []
+
+    def _generate(self, messages, *args, **kwargs):  # type: ignore[override]
+        self.seen.append(list(messages))
+        return super()._generate(messages, *args, **kwargs)
+
+
+class FakeWebTool:
+    """A `web_search` tool double recording its calls (the researcher's calls are otherwise
+    invisible from the orchestrator's messages)."""
+
+    def __init__(self, answer: str = "No web results.") -> None:
+        self.calls: list[str] = []
+        self.answer = answer
+        self.tool = StructuredTool.from_function(
+            func=self._search, name="web_search", description="Search the web."
+        )
+
+    def _search(self, query: str) -> str:
+        """Search the web for external/public library knowledge.
+
+        Args:
+            query: What to search for.
+        """
+        self.calls.append(query)
+        return self.answer

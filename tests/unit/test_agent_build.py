@@ -41,6 +41,7 @@ from tests.fakes import (
     FakeJiraGateway,
     FakeSandbox,
     FakeVectorStore,
+    ScriptedChatModel,
     settings_stub,
 )
 
@@ -60,13 +61,6 @@ RAW_MCP_TOOL_NAMES = {
     jr.TOOL_TRANSITION_ISSUE,
     jr.TOOL_CREATE_ISSUE,
 }
-
-
-class ScriptedChatModel(GenericFakeChatModel):
-    """GenericFakeChatModel that accepts `bind_tools` (returns itself)."""
-
-    def bind_tools(self, tools: Any, **kwargs: Any) -> ScriptedChatModel:  # type: ignore[override]
-        return self
 
 
 def _tool_stub(name: str) -> StructuredTool:
