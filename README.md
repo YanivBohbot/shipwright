@@ -135,7 +135,8 @@ the terminal at every pause. Re-running with the same `--thread` resumes a pause
   changed files from the sandbox and pushes them through the GitHub MCP server on the host side.
   In local mode the shell environment is scrubbed of every `Settings` variable.
 - **Fresh branches only.** Shipwright never pushes onto an existing branch. A re-run uses the
-  first free `shipwright/<KEY>`, `shipwright/<KEY>-r2`, ... created from `main`, and the new PR
+  first free `shipwright/<key>`, `shipwright/<key>-r2`, ... (key in lowercase, e.g.
+  `shipwright/ship-2`) created from `main`, and the new PR
   body says `Supersedes <previous PR URL>`. The PR therefore always equals the approved diff.
 - **Read-only subagents.** `researcher`, `code_analyst` and `reviewer` have the write tools and
   `execute` stripped from their model calls; the auto-added `general-purpose` subagent is

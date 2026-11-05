@@ -10,7 +10,7 @@ from langgraph.types import Command
 
 from shipwright.config import Settings
 from shipwright.integrations.github import FileChange, GitHubGateway
-from shipwright.tickets import parse_ticket_key
+from shipwright.tickets import branch_root, parse_ticket_key
 from shipwright.workspace import Workspace, WorkspaceError
 
 BASE_BRANCH = "main"
@@ -38,7 +38,7 @@ BRANCH_MOVED = (
     "(main moved during publication). No files were pushed; the empty branch can be deleted. "
     "Restart this ticket on a fresh thread."
 )
-MAX_REVISIONS = 20  # shipwright/<key>, then -r2 ... -r20
+MAX_REVISIONS = 20  # branch_root(key) = shipwright/<key lowercase>, then -r2 ... -r20
 
 _UNRELEASED_RE = re.compile(r"^##\s*\[unreleased\]", re.IGNORECASE)
 _H1_RE = re.compile(r"^#\s+\S")
@@ -96,7 +96,9 @@ def _body(key: str, body: str) -> str:
 
 
 def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Settings) -> BaseTool:
-    repo = settings.shipwright_repo
+    # R11: publish to the repo that was actually cloned and reviewed (`make_graph` may override
+    # SHIPWRIGHT_REPO with `configurable.repo`), never to a different one from the settings.
+    repo = workspace.repo
     project = settings.jira_project
 
     async def publish_pull_request(
@@ -114,10 +116,10 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
         current diff of THIS ticket: it refuses if the working tree changed since, or if main
         moved since the workspace was cloned. Pushes every changed file plus CHANGELOG.md
         (changelog_entry added under "## [Unreleased]") to a fresh branch created from main:
-        shipwright/<ticket-key>, or shipwright/<ticket-key>-r2, -r3... if earlier branches
-        exist; the new PR then says which open PR it supersedes. Existing branches and PRs
-        are never modified. Returns the PR URL, or a "REFUSED: ..." / error text. After a
-        successful publication the approval is consumed.
+        shipwright/<ticket-key in lowercase>, or shipwright/<ticket-key>-r2, -r3... if
+        earlier branches exist; the new PR then says which open PR it supersedes. Existing
+        branches and PRs are never modified. Returns the PR URL, or a "REFUSED: ..." / error
+        text. After a successful publication the approval is consumed.
 
         Args:
             ticket_key: Jira key of the ticket, e.g. "SHIP-2".
@@ -167,7 +169,7 @@ def make_publish_tool(workspace: Workspace, github: GitHubGateway, settings: Set
         to_push.append(
             FileChange(CHANGELOG_PATH, insert_changelog_entry(changelog, changelog_entry))
         )
-        root = f"shipwright/{key.lower()}"
+        root = branch_root(key)
         candidates = [root] + [f"{root}-r{n}" for n in range(2, MAX_REVISIONS + 1)]
         pr_title, pr_body = _title(key, title), _body(key, body)
 

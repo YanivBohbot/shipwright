@@ -54,7 +54,7 @@ RAW_MCP_TOOL_NAMES = {
     gh.TOOL_CREATE_PULL_REQUEST,
     gh.TOOL_LIST_BRANCHES,
     gh.TOOL_LIST_PULL_REQUESTS,
-    gh.TOOL_UPDATE_PULL_REQUEST,
+    "update_pull_request",  # no longer wrapped by the gateway; must stay unexposed
     jr.TOOL_GET_ISSUE,
     jr.TOOL_ADD_COMMENT,
     jr.TOOL_GET_TRANSITIONS,

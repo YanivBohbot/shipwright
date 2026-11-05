@@ -1,7 +1,8 @@
 """Verification helpers of `scripts/smoke_live.py` (pure logic over the gateways; unit-tested).
 
-After a live run the PR must exist (open, on `shipwright/<KEY>` or its newest `-rN` revision,
-see `publish_pull_request`), the ticket must carry a comment with the PR URL and be `In Review`.
+After a live run the PR must exist (open, on `shipwright/<key>` in lowercase - see
+`tickets.branch_root` - or its newest `-rN` revision, see `publish_pull_request`), the ticket
+must carry a comment with the PR URL and be `In Review`.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from shipwright.integrations.github import GitHubGateway
-from shipwright.tickets import Ticket
+from shipwright.tickets import Ticket, branch_root
 
 IN_REVIEW = "In Review"
 
@@ -65,7 +66,7 @@ async def verify_outcome(
 ) -> SmokeReport:
     """Check PR, Jira comment and status after a run; never raises on a failed check."""
     report = SmokeReport(key=ticket.key, status=ticket.status)
-    root = f"shipwright/{ticket.key}"
+    root = branch_root(ticket.key)
     branches = sorted(
         (b for b in await github.list_branch_names(repo) if _revision(b, root) > 0),
         key=lambda b: _revision(b, root),

@@ -37,6 +37,7 @@ def _ws(**kwargs) -> FakeWorkspace:
     kwargs.setdefault("diff", DIFF)
     kwargs.setdefault("files", FILES)
     kwargs.setdefault("repo_files", {"CHANGELOG.md": CHANGELOG})
+    kwargs.setdefault("repo", REPO)
     return FakeWorkspace(**kwargs)
 
 
@@ -67,7 +68,7 @@ async def _publish(ws, gh, state: dict | None = None, **overrides) -> str:
 
 
 def _nothing_written(gh: FakeGitHubGateway) -> bool:
-    return gh.branches == [] and gh.pushes == [] and gh.prs == [] and gh.pr_updates == []
+    return gh.branches == [] and gh.pushes == [] and gh.prs == []
 
 
 def _pushed(gh: FakeGitHubGateway) -> dict[str, str | None]:
@@ -153,13 +154,23 @@ async def test_publish_creates_branch_files_changelog_and_pr():
     assert (pr["repo"], pr["head"], pr["base"], pr["draft"]) == (REPO, BRANCH, "main", False)
 
 
+async def test_publish_targets_the_cloned_workspace_repo_not_settings():
+    # R11: workspace cloned "a/x" (configurable.repo override), settings say "b/y"
+    gh = FakeGitHubGateway()
+    tool = make_publish_tool(_ws(repo="a/x"), gh, settings_stub(shipwright_repo="b/y"))
+    call = {"type": "tool_call", "id": "t1", "name": "publish_pull_request"}
+    result = await tool.ainvoke({**call, "args": {**ARGS, "state": APPROVED_STATE}})
+    assert isinstance(result, Command), result
+    assert gh.repos and set(gh.repos) == {"a/x"}
+    assert gh.branches[0][0] == "a/x" and gh.pushes[0][0] == "a/x" and gh.prs[0]["repo"] == "a/x"
+
+
 async def test_publish_never_reuses_an_existing_branch_and_supersedes_open_pr():
     # R6: shipwright/ship-2 exists with an open PR -> fresh -r2 branch from main + NEW PR
     gh = FakeGitHubGateway(existing_branches={BRANCH}, open_prs={BRANCH: URL})
     out = await _publish(_ws(), gh)
     assert gh.branches == [(REPO, f"{BRANCH}-r2", "main")]
     assert [p[1] for p in gh.pushes] == [f"{BRANCH}-r2"]
-    assert gh.pr_updates == []
     (pr,) = gh.prs
     assert pr["head"] == f"{BRANCH}-r2" and out == FAKE_PR_URL
     assert pr["body"] == f"Linked ticket: SHIP-2\n\nImplements CSV export.\n\nSupersedes {URL}"

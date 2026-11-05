@@ -7,7 +7,8 @@ Usage: uv run python scripts/smoke_live.py <scenario> [--thread THREAD] [--user 
 3. prints the PR URL and checks via the GitHub / Jira gateways that the PR exists, the ticket
    has a comment with the PR URL and is `In Review`. Exit code 1 if a check fails.
 
-Running it twice on the same scenario opens a NEW PR on `shipwright/<KEY>-r2` that says
+Running it twice on the same scenario opens a NEW PR on `shipwright/<key>-r2` (lowercase key,
+e.g. `shipwright/ship-2-r2`) that says
 "Supersedes <first PR>" (existing branches are never pushed to, ruling R6).
 """
 

@@ -63,3 +63,12 @@ def extract_acceptance_criteria(description: str) -> list[str]:
 def extract_spec_refs(description: str) -> list[str]:
     """Spec/ADR references (e.g. EXPORT-CSV-v2, ADR-001), in order of first appearance."""
     return _dedupe(_SPEC_REF_RE.findall(description))
+
+
+def branch_root(key: str) -> str:
+    """First PR branch of a ticket: ``"SHIP-2"`` -> ``"shipwright/ship-2"`` (always lowercase).
+
+    Revisions are ``<root>-r2``, ``<root>-r3``... Shared by `publish_pull_request` (which creates
+    the branch) and `smoke.verify_outcome` (which looks for it), so they can never disagree.
+    """
+    return f"shipwright/{key.strip().lower()}"

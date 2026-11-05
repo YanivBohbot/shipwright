@@ -62,7 +62,8 @@ loading in Studio). Those get a **schema-only** graph: same structure, an unclon
 4. `publish_pull_request` (guarded by `interrupt_on`: approve/reject) refuses unless the hash of
    the current tree equals `approved_diff_hash` **before and after** reading the changed files, the
    ticket key matches, and `main`'s head equals the workspace `base_sha`.
-5. It picks the first free branch among `shipwright/<KEY>`, `-r2` ... `-r20`, creates it from
+5. It picks the first free branch among `shipwright/<key>` (key in lowercase, e.g.
+   `shipwright/ship-2`; `tickets.branch_root`), `-r2` ... `-r20`, creates it from
    `main`, verifies the new branch points at `base_sha`, pushes the files plus the `CHANGELOG.md`
    entry, opens the PR (`Supersedes <url>` for earlier open PRs) and clears the approval.
 

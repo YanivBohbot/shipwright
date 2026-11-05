@@ -15,7 +15,6 @@ TOOL_DELETE_FILE = "delete_file"
 TOOL_CREATE_PULL_REQUEST = "create_pull_request"
 TOOL_LIST_BRANCHES = "list_branches"
 TOOL_LIST_PULL_REQUESTS = "list_pull_requests"
-TOOL_UPDATE_PULL_REQUEST = "update_pull_request"
 
 _PAGE_SIZE = 100
 _MAX_PAGES = 10
@@ -35,11 +34,9 @@ class GitHubGateway(Protocol):
     async def create_pull_request(
         self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> str: ...
-    async def branch_exists(self, repo: str, branch: str) -> bool: ...
     async def list_branch_names(self, repo: str) -> set[str]: ...
     async def get_branch_sha(self, repo: str, branch: str) -> str: ...
     async def find_open_pull_request(self, repo: str, head: str) -> str | None: ...
-    async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None: ...
 
 
 def _split_repo(repo: str) -> tuple[str, str]:
@@ -47,13 +44,6 @@ def _split_repo(repo: str) -> tuple[str, str]:
     if not owner or not name or "/" in name:
         raise ValueError(f"repo must have the format 'owner/name', got {repo!r}")
     return owner, name
-
-
-def _pr_number(pr_url: str) -> int:
-    m = re.search(r"/pull/(\d+)", pr_url)
-    if not m:
-        raise ValueError(f"Not a pull request URL: {pr_url!r}")
-    return int(m.group(1))
 
 
 def _find_key(data: Any, key: str) -> Any:
@@ -166,9 +156,6 @@ class McpGitHubGateway:
             f"cannot determine whether branch {branch!r} exists"
         )
 
-    async def branch_exists(self, repo: str, branch: str) -> bool:
-        return await self._find_branch(repo, branch) is not None
-
     async def list_branch_names(self, repo: str) -> set[str]:
         """Names of all branches (paged `list_branches`; raises past the page limit)."""
         owner, name = _split_repo(repo)
@@ -212,14 +199,3 @@ class McpGitHubGateway:
                 if url:
                     return str(url)
         return None
-
-    async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None:
-        owner, name = _split_repo(repo)
-        await self._call(
-            TOOL_UPDATE_PULL_REQUEST,
-            owner=owner,
-            repo=name,
-            pullNumber=_pr_number(pr_url),
-            title=title,
-            body=body,
-        )

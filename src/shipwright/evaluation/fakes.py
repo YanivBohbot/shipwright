@@ -186,9 +186,10 @@ class FakeGitHubGateway:
         self.branches: list[tuple[str, str, str]] = []
         self.pushes: list[tuple[str, str, list[FileChange], str]] = []
         self.prs: list[dict[str, Any]] = []
-        self.pr_updates: list[tuple[str, str, str, str]] = []
+        self.repos: list[str] = []  # repo argument of EVERY call, reads included
 
     async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None:
+        self.repos.append(repo)
         self.branches.append((repo, branch, from_branch))
         self.existing_branches.add(branch)
         # a new branch points at its source's head unless a test pre-configured its sha
@@ -197,12 +198,14 @@ class FakeGitHubGateway:
     async def push_files(
         self, repo: str, branch: str, files: list[FileChange], message: str
     ) -> str:
+        self.repos.append(repo)
         self.pushes.append((repo, branch, list(files), message))
         return f"sha{len(self.pushes)}"
 
     async def create_pull_request(
         self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> str:
+        self.repos.append(repo)
         self.prs.append(
             {"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft}
         )
@@ -210,21 +213,18 @@ class FakeGitHubGateway:
         self.open_prs[head] = url
         return url
 
-    async def branch_exists(self, repo: str, branch: str) -> bool:
-        return branch in self.existing_branches
-
     async def list_branch_names(self, repo: str) -> set[str]:
+        self.repos.append(repo)
         self.list_calls += 1
         return set(self.existing_branches)
 
     async def get_branch_sha(self, repo: str, branch: str) -> str:
+        self.repos.append(repo)
         return self.branch_shas.get(branch, FAKE_BASE_SHA)
 
     async def find_open_pull_request(self, repo: str, head: str) -> str | None:
+        self.repos.append(repo)
         return self.open_prs.get(head)
-
-    async def update_pull_request(self, repo: str, pr_url: str, title: str, body: str) -> None:
-        self.pr_updates.append((repo, pr_url, title, body))
 
 
 _REDIRECT_RE = re.compile(r'>\s*"([^"]+)"\s*$')
@@ -361,7 +361,9 @@ class FakeWorkspace:
         repo_files: dict[str, str] | None = None,
         hashes: list[str] | None = None,
         base: str = FAKE_BASE_SHA,
+        repo: str = "acme/taskboard-api",
     ) -> None:
+        self.repo = repo  # the cloned repo (`Workspace.repo`): publish targets it
         self.base = base
         self.diff_text = diff
         self.files = list(files or [])

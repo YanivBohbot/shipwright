@@ -52,7 +52,7 @@ Decisions:
 
 Show after: the PR on GitHub (template body, `CHANGELOG.md` entry, CI check running), the Jira
 ticket (comment + `In Review`), the `audit_log` documents in Atlas. If an earlier smoke PR exists,
-point out the branch `shipwright/<KEY>-r2` and the line `Supersedes <old PR>`: Shipwright never
+point out the branch `shipwright/<key>-r2` (lowercase key, e.g. `shipwright/ship-2-r2`) and the line `Supersedes <old PR>`: Shipwright never
 pushes onto an existing branch.
 
 ## Scenario 4: ambiguous ticket (about 2 minutes)
