@@ -2,19 +2,20 @@
 
 Run: uv run pytest -m llm tests/integration/test_scenarios.py -v
 Needs a `.env` with OPENAI_API_KEY / MODEL_* (other services are faked; no MCP, no Pinecone).
-Human decisions are scripted in `shipwright.evaluation.decisions` (shared with the evals).
+Human decisions are scripted in `tests/scenarios.py` (shared with the evals).
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from shipwright.agent import build_agent
-from shipwright.evaluation.decisions import decider_for
+from shipwright.agent.orchestrator import build_shipwright_agent
 from tests.fakes import RecordingChatModel
-from tests.integration.helpers import ScenarioEnv, build_scenario_env, drive, is_green
+from tests.scenarios import ScenarioEnv, build_scenario_env, decider_for, drive, is_green
 
 pytestmark = pytest.mark.llm
 
@@ -86,13 +87,8 @@ async def test_s6_feedback_loop_and_memory(tmp_path):
 
     # new thread, same user, scenario 1: the loaded system prompt contains the preference
     model = RecordingChatModel(messages=iter([AIMessage(content="ok")]))
-    fresh = build_agent(
-        env.settings,
-        env.deps,
-        env.workspace,
-        checkpointer=InMemorySaver(),
-        store=env.store,
-        model=model,
+    fresh = build_shipwright_agent(
+        dataclasses.replace(env.deps, model=model, checkpointer=InMemorySaver())
     )
     await fresh.ainvoke(
         {"messages": [{"role": "user", "content": "Process Jira ticket SHIP-1."}]},

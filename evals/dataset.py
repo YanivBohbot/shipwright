@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 import langsmith
 
-from shipwright.demo_tickets import load_demo_tickets
-from shipwright.tickets import extract_acceptance_criteria
+from shipwright.domain.tickets import extract_acceptance_criteria
+from shipwright.integrations.jira.local_jira import load_demo_tickets
 
+TICKETS = Path(__file__).resolve().parents[1] / "demo" / "tickets.yaml"
 DATASET_NAME = "shipwright-scenarios"
 _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "shipwright/evals/scenarios")
 
@@ -44,7 +46,7 @@ def build_examples(project: str = "SHIP") -> list[dict[str, Any]]:
             },
             "metadata": {"summary": t.summary, "issue_type": t.issue_type},
         }
-        for t in sorted(load_demo_tickets(), key=lambda t: t.scenario)
+        for t in sorted(load_demo_tickets(TICKETS), key=lambda t: t.scenario)
     ]
 
 

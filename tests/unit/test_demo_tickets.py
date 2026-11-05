@@ -1,14 +1,22 @@
+"""demo/tickets.yaml (one ticket per scenario) and the idempotent seed script."""
+
 import dataclasses
 import json
 from pathlib import Path
 
 import pytest
 
-from shipwright.demo_tickets import DemoTicket, load_demo_tickets, seed_demo_tickets
-from shipwright.tickets import extract_acceptance_criteria, extract_spec_refs
+from scripts.seed_jira import seed_demo_tickets
+from shipwright.domain.tickets import extract_acceptance_criteria, extract_spec_refs
+from shipwright.integrations.jira.local_jira import DemoTicket
+from shipwright.integrations.jira.local_jira import load_demo_tickets as _load
 from tests.fakes import FakeJiraGateway
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def load_demo_tickets(path: Path = ROOT / "demo" / "tickets.yaml") -> list[DemoTicket]:
+    return _load(path)
 
 
 def _by_scenario() -> dict[int, DemoTicket]:

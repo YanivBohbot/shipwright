@@ -1,6 +1,6 @@
 """LangSmith evaluators `(run, example) -> {"key", "score"}`.
 
-`run.outputs` is the dict returned by `evals.harness.run_example`; `example.outputs` holds the
+`run.outputs` is the dict returned by `evals.run_evals.run_example`; `example.outputs` holds the
 reference values of `evals.dataset`. A `score` of None means "not applicable" to the scenario.
 """
 
@@ -102,7 +102,7 @@ class CriteriaVerdict(BaseModel):
 def _default_judge() -> Any:
     from langchain.chat_models import init_chat_model
 
-    from shipwright.config import get_settings
+    from shipwright.core.config import get_settings
 
     return init_chat_model(get_settings().model_light)
 

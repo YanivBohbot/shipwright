@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.runnables import RunnableLambda
 
-from evals.dataset import build_examples, example_id, upsert_dataset
+from evals.dataset import TICKETS, build_examples, example_id, upsert_dataset
 from evals.evaluators import (
     CriteriaVerdict,
     CriterionVerdict,
@@ -17,9 +17,13 @@ from evals.evaluators import (
     tests_green,
     trajectory_subagents,
 )
-from evals.harness import summarize_run
-from shipwright.demo_tickets import load_demo_tickets
-from shipwright.evaluation.runner import RunOutcome
+from evals.run_evals import summarize_run
+from shipwright.integrations.jira.local_jira import load_demo_tickets as _load
+from tests.scenarios import RunOutcome
+
+
+def load_demo_tickets():
+    return _load(TICKETS)
 
 
 def ex(scenario: int, **outputs):

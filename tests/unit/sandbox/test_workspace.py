@@ -166,13 +166,14 @@ async def test_local_git_sees_no_user_global_or_system_config(real_ws):
     assert str(Path.home() / ".gitconfig") not in origins and "credential.helper" not in origins
 
 
-async def test_read_repo_file(real_ws):
+async def test_read_base_file_reads_the_base_commit_not_the_worktree(real_ws):
     ws, _ = real_ws
-    assert await ws.read_repo_file("app/a.py") == "print('a')\n"
-    assert await ws.read_repo_file("app/missing.py") is None
+    (Path(ws.shell_repo_dir) / "app" / "a.py").write_text("changed\n", newline="\n")
+    assert await ws.read_base_file("app/a.py") == "print('a')\n"
+    assert await ws.read_base_file("app/missing.py") is None
     for bad in ("../x", "/etc/passwd", "C:/x", "a//b", ""):
         with pytest.raises(ValueError):
-            await ws.read_repo_file(bad)
+            await ws.read_base_file(bad)
 
 
 def test_shell_helpers():

@@ -1,8 +1,8 @@
 # Shipwright offline evaluations
 
 One LangSmith experiment over the 7 demo scenarios (`demo/tickets.yaml`). Each example runs the
-real agent with a real OpenAI model, fake Jira/GitHub/web, the `local` sandbox provider and the
-scripted human decisions of `shipwright.evaluation.decisions` (same table as the integration tests).
+real agent with a real OpenAI model, fake Jira/GitHub/web, a local workspace (copy of the demo repo)
+and the scripted human decisions of `tests/scenarios.py` (same table as the integration tests).
 
 ## Run
 
