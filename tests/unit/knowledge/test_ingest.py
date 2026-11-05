@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from shipwright.knowledge.ingest import chunk_markdown, ingest_directory, parse_document
-from tests.fakes import FakeVectorStore, settings_stub
+from tests.fakes import FakeVectorStore, make_settings
 
 
 def test_chunk_markdown_keeps_section_path():
@@ -22,7 +22,7 @@ def test_chunk_markdown_splits_long_sections():
 async def test_ingest_directory_uses_deterministic_ids(tmp_path):
     (tmp_path / "ADR-001-error-format.md").write_text("# ADR-001\nUse problem+json\n")
     store = FakeVectorStore()
-    n = await ingest_directory(tmp_path, settings_stub(), vector_store=store)
+    n = await ingest_directory(tmp_path, make_settings(), vector_store=store)
     assert n == 1 and store.ids == ["ADR-001-error-format:0"]
     assert store.metadatas[0]["doc_id"] == "ADR-001-error-format"
     assert store.metadatas[0]["section"] == "ADR-001"
@@ -33,13 +33,13 @@ async def test_ingest_directory_recurses_and_ignores_other_files(tmp_path):
     (tmp_path / "specs" / "A.md").write_text("# A\nbody\n")
     (tmp_path / "notes.txt").write_text("ignored")
     store = FakeVectorStore()
-    assert await ingest_directory(tmp_path, settings_stub(), vector_store=store) == 1
+    assert await ingest_directory(tmp_path, make_settings(), vector_store=store) == 1
 
 
 async def test_parse_document_reads_markdown_verbatim(tmp_path: Path):
     p = tmp_path / "x.md"
     p.write_text("# T\nhello\n", encoding="utf-8")
-    assert await parse_document(p, settings_stub()) == "# T\nhello\n"
+    assert await parse_document(p, make_settings()) == "# T\nhello\n"
 
 
 async def test_ingest_prefers_pdf_over_md_with_same_stem(tmp_path, monkeypatch):
@@ -51,5 +51,5 @@ async def test_ingest_prefers_pdf_over_md_with_same_stem(tmp_path, monkeypatch):
 
     monkeypatch.setattr("shipwright.knowledge.ingest.parse_document", fake_parse)
     store = FakeVectorStore()
-    assert await ingest_directory(tmp_path, settings_stub(), vector_store=store) == 1
+    assert await ingest_directory(tmp_path, make_settings(), vector_store=store) == 1
     assert store.texts == ["from pdf"]

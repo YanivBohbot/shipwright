@@ -1,4 +1,8 @@
-"""Parse knowledge documents, chunk them by Markdown headings and index them."""
+"""Knowledge ingestion: parse docs (Markdown, PDF via LlamaParse), chunk by heading, index.
+
+Used by `scripts/ingest_knowledge.py` to fill Pinecone; `chunk_markdown` is also used by the
+local keyword search.
+"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +12,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
-from shipwright.config import Settings
+from shipwright.core.config import Settings
 
 SUPPORTED_SUFFIXES = {".md", ".pdf"}
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -50,6 +54,8 @@ async def parse_document(path: Path, settings: Settings) -> str:
     if suffix == ".pdf":
         from llama_cloud_services import LlamaParse
 
+        if settings.llama_cloud_api_key is None:
+            raise ValueError(f"LLAMA_CLOUD_API_KEY is required to parse {path}")
         parser = LlamaParse(
             api_key=settings.llama_cloud_api_key.get_secret_value(),
             result_type="markdown",
@@ -88,6 +94,8 @@ async def ingest_directory(root: Path, settings: Settings, *, vector_store: Vect
 
 
 def build_vector_store(settings: Settings) -> PineconeVectorStore:
+    if settings.pinecone_api_key is None:
+        raise ValueError("PINECONE_API_KEY is required for the Pinecone vector store")
     embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL, api_key=settings.openai_api_key)
     return PineconeVectorStore(
         index_name=settings.pinecone_index,

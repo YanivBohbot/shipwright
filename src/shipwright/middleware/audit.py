@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
@@ -22,49 +21,19 @@ from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
 from pymongo import AsyncMongoClient
 
+from shipwright.audit import (  # noqa: F401  (one definition, shared with v2)
+    PREVIEW_MAX,
+    AuditEvent,
+    AuditSink,
+    redact_secrets,
+)
+
 logger = logging.getLogger(__name__)
 
 AUDITED_TOOLS = frozenset(
     {"publish_pull_request", "update_jira_ticket", "create_jira_subtasks", "request_human_review"}
 )
-PREVIEW_MAX = 500
 _UNKNOWN = "unknown"
-
-_SECRET_PATTERNS = (
-    re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s,;\"']+"),
-    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
-    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
-)
-
-
-def redact_secrets(value: Any) -> Any:
-    """Recursively mask GitHub tokens, `sk-` API keys and Authorization headers in `value`."""
-    if isinstance(value, str):
-        out = _SECRET_PATTERNS[0].sub(r"\1[REDACTED]", value)
-        for pat in _SECRET_PATTERNS[1:]:
-            out = pat.sub("[REDACTED]", out)
-        return out
-    if isinstance(value, dict):
-        return {k: redact_secrets(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact_secrets(v) for v in value]
-    return value
-
-
-@dataclass
-class AuditEvent:
-    ts: datetime
-    thread_id: str
-    user_id: str
-    tool: str
-    args: dict
-    outcome: Literal["ok", "error"]
-    result_preview: str  # at most 500 characters
-
-
-class AuditSink(Protocol):
-    async def record(self, event: AuditEvent) -> None: ...
 
 
 class MemoryAuditSink:
