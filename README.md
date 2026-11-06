@@ -1,182 +1,133 @@
-# Shipwright
+# Shipwright — learn Deep Agents by reading one real agent
 
 Shipwright is a [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) agent that
-turns **one Jira ticket into one reviewed GitHub pull request**. It reads the ticket, researches
-the referenced specs, explores the target repository, implements the change and its tests in an
-isolated sandbox, self-reviews the diff, and then stops to ask a human. Nothing reaches GitHub or
-Jira without an explicit approval, and the pull request that is published is bit-for-bit the diff
-the human approved.
+turns **one Jira ticket into one reviewed pull request**: it reads the ticket, plans, delegates to
+specialist subagents, changes the code and runs the tests in a sandbox, self-reviews, then **stops
+and asks a human**. Nothing is written to GitHub or Jira without an approval, and the published PR
+contains exactly the diff the human approved.
 
-Built with the open-source `create_deep_agent` SDK (not Managed Deep Agents), LangChain 1.x
-middleware, LangGraph persistence on MongoDB Atlas, Pinecone for the knowledge base, LangSmith
-sandboxes / tracing / evals / deployment, and the official GitHub and Atlassian MCP servers.
+The project exists to show **where each Deep Agents component goes in a real codebase**. Every
+file has one job and a docstring naming the concept it demonstrates.
 
-## How it works
-
-```
-                      +------------------------- human (terminal CLI or LangSmith Studio) -------------------------+
-                      |  approve / edit / reject (interrupt_on)        approve(diff_hash) / feedback / reject      |
-                      |  update_jira_ticket, create_jira_subtasks,     (review gate: request_human_review)         |
-                      |  publish_pull_request                                                                      |
-                      +------------------------------------------^---------------------------------------------+
-                                                                 |
-  Jira ticket  --read-->  +--------------------------------------+---------------------------------------+
-  (Atlassian MCP)         |  ORCHESTRATOR  (create_deep_agent, gpt strong model)                         |
-                          |  write_todos . skills . /memories (per user) . /policies (org, read-only)    |
-                          |  middleware: PII . call limit . retries . fallback . audit . policy seed     |
-                          +--+-----------+-------------+------------------+------------------------------+
-                             | task      | task        | task             | task                  composite tools (only writers)
-                             v           v             v                  v                       +-----------------------------+
-                       +-----------+ +-------------+ +-----------+ +-----------+                  | read_jira_ticket            |
-                       | researcher| | code_analyst| | developer | | reviewer  |  (+ locked       | update_jira_ticket   [HITL] |
-                       | knowledge | | read-only   | | write +   | | read-only |   general-       | create_jira_subtasks [HITL] |
-                       | + web     | | repo explorer| | execute   | | + diff    |   purpose)       | show_workspace_diff         |
-                       +-----+-----+ +------+------+ +-----+-----+ +-----+-----+                  | request_human_review [gate] |
-                             |              |              |             |                        | publish_pull_request [HITL] |
-                     Pinecone / Tavily      +---- sandbox (cloned repo, tests; NO GitHub write creds)+---------------+---------+
-                                                                                                        GitHub MCP (branch, push, PR)
-  State: LangGraph checkpointer + store on MongoDB Atlas (local) / platform (LangSmith Deployment); audit_log in MongoDB
-```
-
-Nominal flow for a ticket: read ticket -> clarification gate (no acceptance criteria: ask on Jira
-and stop) -> size gate (too big: propose sub-tickets and stop) -> plan with `write_todos` ->
-`researcher` (only if a spec/ADR or external knowledge is needed) in parallel with `code_analyst`
--> `developer` (code + tests, at most 3 test attempts) -> `reviewer` (at most 2 fix cycles) ->
-**review gate** -> `publish_pull_request` -> `update_jira_ticket` (PR link, transition to
-`In Review`). Details in [docs/architecture.md](docs/architecture.md).
-
-## Deep Agents building block -> where it lives
-
-| Building block | Implementation | Where |
-|---|---|---|
-| Planning | `write_todos` (explicit `TodoListMiddleware`) | `src/shipwright/agent.py` |
-| Subagents | `researcher`, `code_analyst`, `developer`, `reviewer` (+ locked `general-purpose`), scoped tools | `src/shipwright/subagents/specs.py`, `subagents/prompts/*.md`, `agent.py` |
-| MCP | GitHub MCP + Atlassian MCP via `langchain-mcp-adapters`, wrapped by gateways; raw write tools never reach a model | `integrations/mcp_client.py`, `integrations/github.py`, `integrations/jira.py` |
-| Custom tools | `knowledge_search` (Pinecone), `web_search` (Tavily), composite Jira / publish / review-gate / diff tools | `tools/*.py`, `knowledge/search.py` |
-| Backends | `CompositeBackend`: sandbox workspace (default) + `StoreBackend` on `/memories/` (per user) and `/policies/` (per org) | `backends.py`, `workspace.py` |
-| Sandbox | `LangSmithSandbox`, one per thread, idle TTL; `LocalShellBackend` only for `SHIPWRIGHT_SANDBOX_PROVIDER=local` (dev/tests/evals) | `workspace.py` |
-| Permissions | `/policies/**` write-deny; subagents also cannot write `/memories/**` | `permissions.py` |
-| Read-only subagents | middleware that removes write tools and `execute` from their model calls | `middleware/tool_filter.py` |
-| Skills | `coding-conventions`, `pr-template`, `jira-workflow`, `testing-guidelines` (not inherited: passed explicitly) | `src/shipwright/skills/` |
-| Human-in-the-loop | `interrupt_on` on every GitHub/Jira write + custom `review_gate` interrupt | `tools/__init__.py`, `tools/review_gate.py` |
-| Middleware | PII redaction / GitHub-token block, model-call limit, retries, model fallback, audit trail, policy seeding | `middleware/stack.py`, `audit.py`, `policy_seed.py` |
-| Memory | `/memories/preferences.md` per user (reusable review feedback) | `backends.py`, orchestrator prompt |
-| Context schema | `user_id` (the Jira project comes from `JIRA_PROJECT`) | `context.py` |
-| Durability | MongoDB checkpointer + store (CLI); `checkpointer.backend = mongo` in `langgraph.json` (deployment) | `persistence.py`, `langgraph.json` |
-| Observability | LangSmith tracing (`LANGSMITH_TRACING`, `LANGSMITH_PROJECT`) | `.env` |
-| Evaluation | offline LangSmith experiment over 7 scenarios | `evals/`, `src/shipwright/evaluation/` |
-| Deployment | `langgraph.json` -> LangSmith Deployment | `langgraph.json`, [docs/deployment.md](docs/deployment.md) |
-
-## Setup
-
-Prerequisites: Python 3.12, [uv](https://docs.astral.sh/uv/), accounts for OpenAI, LangSmith,
-MongoDB Atlas, Pinecone, LlamaCloud, Tavily, GitHub (PAT) and Jira (API token).
+## Run the demo (local mode, only an OpenAI key)
 
 ```bash
 uv sync
-cp .env.example .env     # then fill in every value (see below)
+cp .env.example .env          # set OPENAI_API_KEY; optional: LANGSMITH_* for traces
+uv run shipwright run SHIP-1 --user alice
 ```
 
-`.env` variables (all in `src/shipwright/config.py`): `OPENAI_API_KEY`, `MODEL_STRONG`,
-`MODEL_LIGHT`, `LANGSMITH_API_KEY` (+ `LANGSMITH_TRACING=true`, `LANGSMITH_PROJECT=shipwright`),
-`MONGODB_URI`, `MONGODB_DB`, `PINECONE_API_KEY` / `PINECONE_INDEX` / `PINECONE_NAMESPACE`,
-`LLAMA_CLOUD_API_KEY`, `TAVILY_API_KEY`, `GITHUB_PAT`, `GITHUB_MCP_URL`, `SHIPWRIGHT_REPO`
-(`owner/name`), `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PROJECT`,
-`SHIPWRIGHT_SANDBOX_PROVIDER` (`langsmith` | `local`), `MAX_TEST_ATTEMPTS`, `MAX_REVIEW_CYCLES`,
-`ORCHESTRATOR_MODEL_CALL_LIMIT`, `SANDBOX_IDLE_TTL_SECONDS`, `ORG_ID`.
+Local mode (`SHIPWRIGHT_MODE=local`, the default) replaces every external service with a local one
+behind the same interface, so the agent code is identical to live mode:
 
-One-time seeding (these talk to real services):
+| | local (demo) | live |
+|---|---|---|
+| Jira | `demo/tickets.yaml` → writes to `demo/.local_jira.json` | Atlassian MCP (`mcp-atlassian`) |
+| GitHub | bare repo `demo/.local_remote.git`; the "PR" is `demo/.local_prs/shipwright/<key>.md` | GitHub MCP |
+| Sandbox | `LocalShellBackend` under `tmp/` (scrubbed env, **not** a security boundary) | `LangSmithSandbox` |
+| Checkpointer / store | in memory | MongoDB |
+| Knowledge | Pinecone if the index exists, else keyword search over `knowledge/` | Pinecone |
+| Web search | Tavily if `TAVILY_API_KEY`, else disabled | Tavily |
 
-```bash
-uv run python scripts/ingest_knowledge.py   # knowledge/ (specs, ADRs) -> Pinecone
-uv run python scripts/seed_policies.py      # org policies -> MongoDB store (CLI runs)
-uv run python scripts/seed_jira.py          # demo tickets -> Jira, keys saved in demo/seeded.json
+The target repo is `demo/taskboard-api/` (a small FastAPI service with a known bug). It must exist
+as a git repository on `main`.
+
+**What you will see** for `SHIP-1` (empty assignee → HTTP 500):
+1. `read_jira_ticket`, a plan with `write_todos`.
+2. `task` → `code_analyst` (read-only exploration), then `developer` (edits + `uv run pytest -q`
+   in the sandbox), then `reviewer` (structured verdict; on `changes_requested` the loop goes back to
+   the developer).
+3. **Review gate**: the diff, the test output and the reviewer report are printed. Type `approve`.
+4. `publish_pull_request` approval (`approve`) → branch `shipwright/ship-1` pushed to the local
+   remote and the PR file written.
+5. `update_jira_ticket` approval (`approve`) → comment + `In Review`.
+
+`uv run shipwright run SHIP-4` is an ambiguous ticket ("improve performance", no acceptance
+criteria): the agent posts clarifying questions on Jira and stops, no code, no PR.
+`demo/tickets.yaml` has 7 scenarios (bugfix, spec-driven feature, ambiguous, too big, ...).
+
+Reset the demo state: delete `demo/.local_remote.git`, `demo/.local_prs/`, `demo/.local_jira.json`
+(otherwise a re-run of a ticket publishes a fresh `-r2` branch that "supersedes" the first).
+
+Traces: with `LANGSMITH_TRACING=true` and `LANGSMITH_PROJECT=shipwright`, every run is in LangSmith,
+including each subagent and tool call. Pinecone: `uv run python scripts/ingest_knowledge.py` creates
+and fills the index (otherwise local keyword search is used).
+
+## Reading order
+
+1. **`src/shipwright/main.py`** — the CLI: builds the dependencies, streams the run, and answers
+   interrupts in the terminal (`Command(resume=...)`).
+2. **`src/shipwright/agent/orchestrator.py`** — **the single `create_deep_agent(...)` call**. Every
+   argument is one component; the table below says where each one lives.
+3. The modules it imports, in the order of the arguments.
+
+## Where each Deep Agents component lives
+
+| Component | `create_deep_agent` arg | File |
+|---|---|---|
+| Model (strong / light, fallback) | `model` | `core/config.py`, `agent/dependencies.py` |
+| System prompt (Markdown) | `system_prompt` | `agent/prompts/orchestrator.md`, `agent/prompts/loader.py` |
+| Planning (`write_todos`) | built in | prompt asks for it; visible in the CLI output |
+| Subagents (`task`) | `subagents` | `agent/subagents/researcher.py`, `code_analyst.py`, `developer.py`, `reviewer.py`; `general_purpose.py` overrides the built-in one (no tools) |
+| Structured subagent output | subagent `response_format` | `agent/subagents/reviewer.py` (`ReviewReport`) |
+| Custom tools | `tools` | `agent/tools/jira_tools.py`, `review_tools.py`, `github_tools.py`, `knowledge_tools.py`, `web_tools.py` |
+| MCP | wrapped by gateways, raw MCP tools never reach a model | `integrations/mcp.py`, `integrations/jira/mcp_jira.py`, `integrations/github/mcp_github.py` |
+| Backend (CompositeBackend) | `backend` | `agent/backend.py`: `/` sandbox, `/memories/` per user, `/policies/` per org, `/skills/` read-only |
+| Sandbox | default route of the backend | `sandbox/providers.py` (local / LangSmith), `sandbox/workspace.py` |
+| Permissions | `permissions` | `agent/backend.py` (`PERMISSIONS`, `SUBAGENT_PERMISSIONS`) |
+| Skills (SKILL.md, loaded on demand) | `skills=["/skills/"]` | `agent/skills/*/SKILL.md` |
+| Memory (always in the prompt) | `memory` | `/memories/preferences.md` (per user), `/policies/POLICIES.md` (`agent/policies/`) |
+| Human-in-the-loop | `interrupt_on` + `interrupt()` in a tool | `agent/hitl.py`; the review gate in `agent/tools/review_tools.py` |
+| Middleware | `middleware` | `agent/middleware.py`: PII, model-call limit, model/tool retries, model fallback, policy seed, audit, read-only tool filter |
+| State / context schemas | `state_schema`, `context_schema` | `agent/state.py` (`approved_diff_hash` is `OmitFromInput`) |
+| Checkpointer / store | `checkpointer`, `store` | `core/persistence.py` |
+| Deployment | `langgraph.json` → `graph.py:make_graph` | `src/shipwright/graph.py`, `docs/deployment.md` |
+| Evals | LangSmith `aevaluate` | `evals/` |
+
+The rest is plain application code: `domain/` (ticket parsing, changelog), `integrations/` (the
+`JiraGateway` / `GitHubGateway` protocols with a local and an MCP implementation each),
+`knowledge/` (ingestion and search), `audit.py`.
+
+```
+src/shipwright/
+  main.py  graph.py  audit.py
+  core/          config.py  persistence.py
+  domain/        tickets.py  changelog.py
+  agent/         orchestrator.py  dependencies.py  state.py  backend.py  middleware.py  hitl.py
+                 subagents/  prompts/  tools/  skills/  policies/
+  integrations/  mcp.py  jira/{gateway,local_jira,mcp_jira}.py  github/{gateway,local_github,mcp_github}.py
+  sandbox/       workspace.py  providers.py  shell.py  git_diff.py
+  knowledge/     ingest.py  search.py
 ```
 
-Demo repository: the target repo is a **public** FastAPI service (`demo/taskboard-api/`, its own
-git history) that you publish as a GitHub repo, for example
-`gh repo create <you>/taskboard-api --public --source demo/taskboard-api --push`, then set
-`SHIPWRIGHT_REPO=<you>/taskboard-api`. It is public on purpose: the sandbox clones it anonymously
-over HTTPS and never holds a GitHub credential. Optionally protect `main` and keep the CI
-workflow so the PR shows a green check.
+## Security model (what the code guarantees)
 
-The deployed graph does not need `seed_policies.py`: `PolicySeedMiddleware` writes
-`/policies/POLICIES.md` into the runtime store on first use when it is missing.
+- **No external write without a human.** `update_jira_ticket`, `create_jira_subtasks` and
+  `publish_pull_request` are in `interrupt_on`; `publish_pull_request` additionally refuses unless
+  the review gate (`request_human_review`) was approved.
+- **The PR is exactly the approved diff.** Approving echoes the `diff_hash` shown to the human; it
+  is stored in state (`approved_diff_hash`, not settable from input). At publish time the diff is
+  recomputed and must hash the same, and every pushed file's git blob sha must equal the blob id in
+  that diff (`sandbox/git_diff.py`). This blocks tricks like clean filters or `assume-unchanged`
+  that make the working tree differ from the diff.
+- **No credentials in the sandbox.** The sandbox clone cannot push; publishing goes through the
+  gateway, outside the sandbox. The local shell runs with a scrubbed environment.
+- **Read-only where it should be.** `/policies/` and `/skills/` are write-denied; `code_analyst`,
+  `reviewer` and `researcher` have their write tools and `execute` removed by middleware.
+- **Audit trail** of every write-capable tool call (`tmp/audit.jsonl` locally, MongoDB live),
+  with secrets redacted.
 
-## Commands
+## Live mode
+
+Set `SHIPWRIGHT_MODE=live` and fill `.env` (GitHub PAT + `SHIPWRIGHT_REPO`, Jira URL/user/token,
+`MONGODB_URI`, LangSmith key for the sandbox; Pinecone recommended). Seed the Jira project with
+`uv run python scripts/seed_jira.py`, then run the same CLI command, or `uv run langgraph dev` to use
+LangSmith Studio. Deployment: `docs/deployment.md`.
+
+## Tests and evals
 
 ```bash
-uv run shipwright run SHIP-2 [--user alice] [--thread my-thread]  # terminal CLI (local mode)
-uv run langgraph dev                                              # Agent Server + Studio, hot reload
-uv run pytest                                                     # unit tests (offline, default)
-uv run pytest -m llm                                              # scenario tests with a real model
-uv run pytest -m live                                             # live tests (real services)
-uv run python evals/run_evals.py --repetitions 2                  # LangSmith offline evaluation
-uv run python scripts/smoke_live.py 2                             # live smoke run + PR/Jira check
+uv run pytest            # unit tests (fake model, real git, local gateways); `-m llm` for real-model tests
 uv run ruff check .
-```
-
-`shipwright run` streams todos, subagent activity and tool calls, and asks for your decision in
-the terminal at every pause. Re-running with the same `--thread` resumes a paused run. Deployment:
-[docs/deployment.md](docs/deployment.md). Demo script: [docs/demo-guide.md](docs/demo-guide.md).
-
-## Security model
-
-- **Every write is approved by a human.** `publish_pull_request`, `update_jira_ticket` and
-  `create_jira_subtasks` are guarded by `interrupt_on`; the arguments are shown and can be edited
-  (Jira tools) or rejected. Raw MCP write tools are never exposed to a model.
-- **Review gate bound to the exact diff.** `request_human_review` shows the full diff and its
-  SHA-256 `diff_hash`. Approving requires echoing that hash; it is re-checked when the run
-  resumes and again, before and after reading the files, inside `publish_pull_request`. If the
-  working tree changed, or the approval belongs to another ticket, or `main` moved since the
-  clone, publication is refused. The approval is cleared after publishing.
-- **The sandbox holds no GitHub write credentials** (D2). The repo is public and cloned over
-  anonymous HTTPS; the developer cannot `git push`. After approval, the orchestrator reads the
-  changed files from the sandbox and pushes them through the GitHub MCP server on the host side.
-  In local mode the shell environment is scrubbed of every `Settings` variable.
-- **Fresh branches only.** Shipwright never pushes onto an existing branch. A re-run uses the
-  first free `shipwright/<key>`, `shipwright/<key>-r2`, ... (key in lowercase, e.g.
-  `shipwright/ship-2`) created from `main`, and the new PR
-  body says `Supersedes <previous PR URL>`. The PR therefore always equals the approved diff.
-- **Read-only subagents.** `researcher`, `code_analyst` and `reviewer` have the write tools and
-  `execute` stripped from their model calls; the auto-added `general-purpose` subagent is
-  replaced by a tool-less, read-only one of the same name so it cannot inherit
-  `publish_pull_request` / Jira write tools. Only `developer` writes files and runs commands, and
-  it cannot commit or push.
-- **Org policies are read-only** (`/policies/**` write-deny, seeded outside the model's reach);
-  subagents also cannot write `/memories/**`.
-- **Input guards and audit.** Emails are redacted from input, GitHub tokens in input abort the
-  run, `ModelCallLimitMiddleware(150)` bounds runaway loops, only read-only tools are retried,
-  and every write-capable tool call is logged (secrets redacted) in the MongoDB `audit_log`
-  collection.
-
-## Known limitations
-
-- **Live behaviour is not yet verified end to end.** The offline suite and fakes cover the logic;
-  MCP tool names/result shapes, the LangSmith sandbox image (git + uv), Pinecone/LlamaParse
-  quality and the deployment are validated only by the live smoke run (`scripts/smoke_live.py`).
-- Local `LocalShellBackend` mode is for dev/tests/evals only: its environment scrubbing is a
-  default, not a security boundary. Never use it with untrusted tickets.
-- `langgraph dev` runs on an in-memory checkpointer (the `mongo` backend applies to a real
-  deployment). A deployment uses the platform store (Postgres); the audit log stays in MongoDB.
-- Stateless runs are not supported: every run needs a `thread_id`.
-- A superseded PR is not closed automatically; if `main` moves during a run, publishing is
-  refused and the run must be repeated.
-- Shipwright does not watch the GitHub Actions run of the PR; the CI check is for the human.
-- API clients can write arbitrary state keys on a thread; the approval keys are only trustworthy
-  for threads driven through the CLI/Studio flow (no input filter on `approved_*`).
-- Human rejections at `interrupt_on` leave no audit event (only executed writes are logged).
-- `shipwright.evaluation` fakes ship in the deployment image but are unreachable from production
-  code paths (guarded by a unit test).
-
-## Repository layout
-
-```
-src/shipwright/   agent.py graph.py cli.py config.py workspace.py backends.py permissions.py ...
-  subagents/ tools/ middleware/ integrations/ knowledge/ skills/ prompts/ policies/ evaluation/
-scripts/          ingest_knowledge.py seed_policies.py seed_jira.py smoke_live.py build_knowledge_pdf.py
-knowledge/        specs and ADRs of the demo repo (source of the Pinecone index)
-demo/             tickets.yaml (7 scenarios), taskboard-api/ (target repo)
-evals/            LangSmith dataset, evaluators, runner      tests/   unit + integration (llm/live)
-docs/             architecture.md  deployment.md  demo-guide.md
+uv run python evals/run_evals.py   # LangSmith experiment over the 7 scenarios (real model)
 ```

@@ -30,20 +30,20 @@ go-ahead because they are outward actions).
 
 ## Secrets to configure
 
-All variables of `.env.example` (they are the fields of `shipwright.config.Settings`):
+All variables of `.env.example` (they are the fields of `shipwright.core.config.Settings`):
 
 | Variable | Required | Note |
 |---|---|---|
-| `OPENAI_API_KEY`, `MODEL_STRONG`, `MODEL_LIGHT` | yes | `MODEL_LIGHT` has no default |
+| `OPENAI_API_KEY` | yes | `MODEL_STRONG` / `MODEL_LIGHT` default to `openai:gpt-5.5` / `openai:gpt-5.4-mini` |
 | `LANGSMITH_API_KEY` / `SHIPWRIGHT_LANGSMITH_API_KEY` | one of them | `LANGSMITH_API_KEY` is reserved by the platform: `langgraph deploy` does not upload it. `Settings` accepts either name, so if the platform does not inject `LANGSMITH_API_KEY` into the graph, set `SHIPWRIGHT_LANGSMITH_API_KEY` as a deployment secret (same value; add it to `.env` before `deploy`) |
 | `LANGSMITH_TRACING`, `LANGSMITH_PROJECT` | optional | `LANGSMITH_PROJECT` is reserved (set by the platform) |
 | `MONGODB_URI`, `MONGODB_DB` | yes | audit log + Settings; also the fallback for the checkpointer URI |
 | `LS_MONGODB_URI` | yes | same Atlas URI **including the database name**; used by the Mongo checkpointer |
-| `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_NAMESPACE` | yes | the index must already be ingested |
-| `LLAMA_CLOUD_API_KEY`, `TAVILY_API_KEY` | yes | |
+| `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_NAMESPACE` | recommended | run `scripts/ingest_knowledge.py` first; without a key, local keyword search over `knowledge/` |
+| `LLAMA_CLOUD_API_KEY`, `TAVILY_API_KEY` | optional | PDF parsing at ingestion / `web_search` (disabled without it) |
 | `GITHUB_PAT`, `GITHUB_MCP_URL`, `SHIPWRIGHT_REPO` | yes | PAT with PR/contents write on the demo repo |
 | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PROJECT` | yes | |
-| `SHIPWRIGHT_SANDBOX_PROVIDER` | must be `langsmith` | `local` (LocalShellBackend) must never be used in a deployment |
+| `SHIPWRIGHT_MODE` | must be `live` | `local` (LocalShellBackend, local Jira/GitHub) is for the terminal demo only |
 | `MAX_TEST_ATTEMPTS`, `MAX_REVIEW_CYCLES`, `ORCHESTRATOR_MODEL_CALL_LIMIT`, `SANDBOX_IDLE_TTL_SECONDS`, `ORG_ID` | optional | defaults 3 / 2 / 150 / 3600 / `default-org` |
 
 Network: the Atlas cluster must be reachable from the LangSmith data plane (add the data plane's
@@ -78,7 +78,7 @@ Other useful flags of `deploy`: `--deployment-id` (update an existing deployment
 
 1. Open the deployment in Studio, create a thread, send `Process Jira ticket SHIP-<n>.` with a
    `user_id` in the run context (`{"user_id": "demo"}`; the Jira project comes from `JIRA_PROJECT`).
-2. Replay scenario 2 as in `docs/demo-guide.md`; expected: PR on the demo repo, Jira comment and
+2. Replay scenario 2 (`demo/tickets.yaml`, seeded with `scripts/seed_jira.py`); expected: PR on the demo repo, Jira comment and
    `In Review`.
 3. In Atlas, check the checkpointer collections receive documents (the langgraph-checkpoint-mongodb defaults are `checkpoints` and `checkpoint_writes`; the Agent Server may use its own names or database, so also look at the database in `LS_MONGODB_URI`) and that `audit_log` in `MONGODB_DB`
    contains the `request_human_review`, `publish_pull_request` and `update_jira_ticket` events.
