@@ -44,3 +44,20 @@ def test_build_searcher_falls_back_to_local_without_pinecone(tmp_path, monkeypat
     monkeypatch.setattr(ingest, "build_vector_store", lambda settings: "store")
     s = build_searcher(make_settings(pinecone_api_key="pc-fake"))
     assert isinstance(s, KnowledgeSearcher)
+
+
+def test_build_searcher_falls_back_when_pinecone_index_missing(tmp_path, monkeypatch):
+    import pytest
+    from pinecone.exceptions import NotFoundException
+
+    import shipwright.knowledge.ingest as ingest
+
+    def missing(settings):
+        raise NotFoundException(status=404, reason="Not Found")
+
+    monkeypatch.setattr(ingest, "build_vector_store", missing)
+    local = make_settings(pinecone_api_key="pc-fake", knowledge_dir=tmp_path)
+    assert isinstance(build_searcher(local), LocalKeywordSearcher)
+    live = make_settings(mode="live", pinecone_api_key="pc-fake")
+    with pytest.raises(NotFoundException):
+        build_searcher(live)

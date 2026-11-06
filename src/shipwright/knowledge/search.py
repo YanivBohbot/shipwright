@@ -77,7 +77,17 @@ class LocalKeywordSearcher:
 def build_searcher(settings: Settings) -> KnowledgeSearcher | LocalKeywordSearcher:
     """Pinecone when `PINECONE_API_KEY` is set, else local keyword search over `knowledge/`."""
     if settings.pinecone_api_key is not None:
+        from pinecone.exceptions import NotFoundException
+
         from shipwright.knowledge.ingest import build_vector_store
 
-        return KnowledgeSearcher(build_vector_store(settings))
+        try:
+            return KnowledgeSearcher(build_vector_store(settings))
+        except NotFoundException:
+            if settings.mode != "local":
+                raise
+            print(
+                f"Pinecone index {settings.pinecone_index!r} not found: using local keyword search"
+                " (run scripts/ingest_knowledge.py to create it)."
+            )
     return LocalKeywordSearcher(settings.knowledge_dir)
