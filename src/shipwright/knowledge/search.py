@@ -4,6 +4,7 @@
 files of `knowledge/` by keyword overlap, so the demo works without Pinecone.
 """
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -26,7 +27,9 @@ class KnowledgeSearcher:
         self._store = vector_store
 
     async def search(self, query: str, k: int = 5) -> list[KnowledgeChunk]:
-        docs = await self._store.asimilarity_search(query, k=k)
+        # The sync client in a worker thread: langchain-pinecone's async client shares one HTTP
+        # session that is closed after each call, so parallel searches fail ("Session is closed").
+        docs = await asyncio.to_thread(self._store.similarity_search, query, k=k)
         return [
             KnowledgeChunk(
                 text=d.page_content,
