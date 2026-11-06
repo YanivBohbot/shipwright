@@ -69,14 +69,17 @@ async def ingest_directory(root: Path, settings: Settings, *, vector_store: Vect
     """Ingest every .md/.pdf under `root`. Returns the number of chunks indexed.
 
     Ids are `{doc_id}:{i}` so re-ingesting a document overwrites its chunks (idempotent).
-    When `X.md` and `X.pdf` coexist only the PDF is ingested (it goes through LlamaParse).
+    When `X.md` and `X.pdf` coexist, the PDF wins if LLAMA_CLOUD_API_KEY is set, else the Markdown.
     """
     total = 0
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
             continue
-        if path.suffix.lower() == ".md" and path.with_suffix(".pdf").exists():
+        has_pdf = path.with_suffix(".pdf").exists()
+        if path.suffix.lower() == ".md" and has_pdf and settings.llama_cloud_api_key is not None:
             continue  # the PDF rendering of the same doc wins (same doc_id would collide)
+        if path.suffix.lower() == ".pdf" and settings.llama_cloud_api_key is None:
+            continue  # no LlamaParse key: the Markdown twin (if any) is ingested instead
         doc_id = path.stem
         markdown = await parse_document(path, settings)
         chunks = chunk_markdown(markdown, source=path.as_posix(), doc_id=doc_id)

@@ -106,3 +106,10 @@ def test_empty_live_secret_counts_as_missing(monkeypatch):
     monkeypatch.setenv("JIRA_API_TOKEN", "")
     with pytest.raises(ValidationError, match="requires: JIRA_API_TOKEN"):
         Settings(_env_file=None)
+
+
+def test_empty_optional_secret_is_none(monkeypatch):
+    monkeypatch.setenv("LLAMA_CLOUD_API_KEY", "")
+    monkeypatch.setenv("TAVILY_API_KEY", "  ")
+    s = Settings(_env_file=None)
+    assert s.llama_cloud_api_key is None and s.tavily_api_key is None

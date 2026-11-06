@@ -51,5 +51,10 @@ async def test_ingest_prefers_pdf_over_md_with_same_stem(tmp_path, monkeypatch):
 
     monkeypatch.setattr("shipwright.knowledge.ingest.parse_document", fake_parse)
     store = FakeVectorStore()
-    assert await ingest_directory(tmp_path, make_settings(), vector_store=store) == 1
+    settings = make_settings(llama_cloud_api_key="llx-fake")
+    assert await ingest_directory(tmp_path, settings, vector_store=store) == 1
     assert store.texts == ["from pdf"]
+
+    store = FakeVectorStore()  # no LlamaParse key: the Markdown twin is ingested, the PDF skipped
+    assert await ingest_directory(tmp_path, make_settings(), vector_store=store) == 1
+    assert store.texts == ["from md"]

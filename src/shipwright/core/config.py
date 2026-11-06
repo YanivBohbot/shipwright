@@ -84,6 +84,21 @@ class Settings(BaseSettings):
     sandbox_idle_ttl_seconds: int = 3600
     org_id: str = "default-org"
 
+    @field_validator(
+        "langsmith_api_key",
+        "mongodb_uri",
+        "pinecone_api_key",
+        "llama_cloud_api_key",
+        "tavily_api_key",
+        "github_pat",
+        "jira_api_token",
+        mode="before",
+    )
+    @classmethod
+    def _empty_secret_is_unset(cls, v: object) -> object:
+        """`KEY=` placeholders in `.env` mean "not set" (None), never an empty credential."""
+        return None if isinstance(v, str) and not v.strip() else v
+
     @field_validator("shipwright_repo")
     @classmethod
     def _validate_repo(cls, v: str | None) -> str | None:
