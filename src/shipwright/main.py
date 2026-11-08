@@ -118,10 +118,22 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
         )
         config: RunnableConfig = {"configurable": {"thread_id": thread}}
         context = ShipwrightContext(user_id=user)
+
+        async def ask_human(interrupts: Any) -> Any:
+            """The resume value, or None when stdin is closed (the run stays paused in Mongo)."""
+            try:
+                # input() blocks: ask in a worker thread so the event loop keeps running.
+                return await asyncio.to_thread(build_resume, interrupts)
+            except EOFError:
+                print(f"\nPaused for approval. Resume with: shipwright run {key} --thread {thread}")
+                return None
+
         state = await agent.aget_state(config)
         if state.interrupts:  # a paused run of this thread (same --thread)
             print("Resuming a paused run.")
-            run_input: Any = await asyncio.to_thread(build_resume, state.interrupts)
+            run_input: Any = await ask_human(state.interrupts)
+            if run_input is None:
+                return
         else:
             run_input = {"messages": [{"role": "user", "content": f"Process Jira ticket {key}."}]}
         progress = Progress()
@@ -138,8 +150,9 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
             state = await agent.aget_state(config)
             if not state.interrupts:
                 break
-            # input() blocks: ask in a worker thread so the event loop keeps running.
-            run_input = await asyncio.to_thread(build_resume, state.interrupts)
+            run_input = await ask_human(state.interrupts)
+            if run_input is None:
+                return
     print(f"\nDone (thread {thread}).")
 
 
