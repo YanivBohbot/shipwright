@@ -22,8 +22,11 @@ AGENT_DIR = Path(__file__).parent
 SKILLS_ROUTE = "/skills/"
 MEMORY_FILES = ["/memories/preferences.md", "/policies/POLICIES.md"]
 
+# The orchestrator: the code (`/workspace/**`) is the developer's only; it may write `/memories/`.
 PERMISSIONS = [
-    FilesystemPermission(operations=["write"], paths=["/policies/**", "/skills/**"], mode="deny"),
+    FilesystemPermission(
+        operations=["write"], paths=["/policies/**", "/skills/**", "/workspace/**"], mode="deny"
+    ),
 ]
 SUBAGENT_PERMISSIONS = [
     FilesystemPermission(

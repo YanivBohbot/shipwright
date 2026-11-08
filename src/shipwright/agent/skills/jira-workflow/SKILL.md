@@ -41,18 +41,21 @@ When the policy size limit (400 changed diff lines) would be exceeded or the tic
 independent concerns, propose 2-5 sub-tasks, each one small PR. Create each one, then comment
 the split on the parent and **STOP**.
 
+The child's type depends on the parent's (Jira hierarchy: Epic > Task/Story > Sub-task):
+- parent is an **Epic** → `issue_type="Task"` (a sub-task cannot be a child of an Epic);
+- parent is a Task, Story or Bug → `issue_type="Sub-task"`.
+
 ```
 jira_create_issue(
   project_key="SHIP",
   summary="<imperative, specific title>",
-  issue_type="Subtask",
+  issue_type="Task",            # parent is an Epic; "Sub-task" under a Task/Story/Bug
   description="Goal: <one sentence>.\nAcceptance criteria covered: <AC list>.",
   additional_fields='{"parent": "SHIP-12"}',
 )
 ```
 
-If `Subtask` is rejected, the project names the type differently (e.g. `Sub-task`): retry once
-with that name.
+Omit optional arguments you do not set (`assignee`, `components`): never pass empty strings.
 
 ## 3. After the pull request is opened
 

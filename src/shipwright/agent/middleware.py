@@ -54,6 +54,7 @@ def build_middleware(settings: Settings) -> list[AgentMiddleware[Any, Any, Any]]
         ModelRetryMiddleware(on_failure="error", **retry),
         ToolRetryMiddleware(tools=["jira_get_issue"], on_failure="continue", **retry),
         ModelFallbackMiddleware(settings.model_light),
+        ReadOnlyToolsMiddleware(blocked={"execute"}),  # the orchestrator never runs commands
     ]
 
 
@@ -64,18 +65,27 @@ def _tool_name(tool: Any) -> str | None:
 
 
 class ReadOnlyToolsMiddleware(AgentMiddleware):
-    """Remove `write_file`/`edit_file`/`delete`/`execute` from the model; refuse them if called."""
+    """Remove built-in tools from the model and refuse them if called anyway.
+
+    Default: `write_file`/`edit_file`/`delete`/`execute` (read-only subagents). The orchestrator
+    uses `blocked={"execute"}`: it keeps the file writes for `/memories/` (its permissions deny
+    `/workspace/**`), but never runs commands; only the developer does.
+    """
+
+    def __init__(self, blocked: frozenset[str] | set[str] = BUILTIN_WRITE_TOOLS) -> None:
+        super().__init__()
+        self.blocked = frozenset(blocked)
 
     async def awrap_model_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
-        kept = [t for t in request.tools if _tool_name(t) not in BUILTIN_WRITE_TOOLS]
+        kept = [t for t in request.tools if _tool_name(t) not in self.blocked]
         return await handler(request.override(tools=kept))
 
     async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
         name = request.tool_call["name"]
-        if name not in BUILTIN_WRITE_TOOLS:
+        if name not in self.blocked:
             return await handler(request)
         return ToolMessage(
-            content=f"Error: tool '{name}' is not available to this agent (read-only).",
+            content=f"Error: tool '{name}' is not available to this agent.",
             tool_call_id=request.tool_call["id"],
             name=name,
             status="error",
