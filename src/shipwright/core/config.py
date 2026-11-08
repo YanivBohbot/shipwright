@@ -9,12 +9,17 @@ import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+# `scheme://user:password@rest`; the password is everything up to the LAST `@` before the host.
+_MONGO_CREDENTIALS_RE = re.compile(
+    r"^(?P<scheme>mongodb(?:\+srv)?://)(?P<user>[^:@/]+):(?P<password>.*)@(?P<rest>[^@]+)$"
+)
 
 
 class Settings(BaseSettings):
@@ -93,6 +98,22 @@ class Settings(BaseSettings):
             if not v:
                 raise ValueError("must not be empty")
         return v
+
+    @field_validator("mongodb_uri", mode="before")
+    @classmethod
+    def _encode_mongodb_credentials(cls, v: object) -> object:
+        """Percent-encode the user and password of the URI (Atlas passwords may hold `+`, `@`...).
+
+        pymongo decodes `+` as a space, so a raw `+` silently changes the password. An URI
+        that is already encoded (contains `%`) is left as is.
+        """
+        if not isinstance(v, str):
+            return v
+        match = _MONGO_CREDENTIALS_RE.match(v.strip())
+        if not match or "%" in match["user"] + match["password"]:
+            return v
+        user, password = quote(match["user"], safe=""), quote(match["password"], safe="")
+        return f"{match['scheme']}{user}:{password}@{match['rest']}"
 
     @field_validator("shipwright_repo")
     @classmethod

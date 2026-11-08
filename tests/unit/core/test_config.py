@@ -55,3 +55,19 @@ def test_repo_accepts_a_github_url(value):
 def test_required_secrets_must_not_be_blank(field):
     with pytest.raises(ValidationError, match=field):
         make_settings(**{field: " "})
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("mongodb+srv://bob:a+b@c.mongodb.net/", "mongodb+srv://bob:a%2Bb@c.mongodb.net/"),
+        (
+            "mongodb+srv://bob:p@ss:w/d@c.mongodb.net/",
+            "mongodb+srv://bob:p%40ss%3Aw%2Fd@c.mongodb.net/",
+        ),
+        ("mongodb+srv://bob:a%2Bb@c.mongodb.net/", "mongodb+srv://bob:a%2Bb@c.mongodb.net/"),
+        ("mongodb://localhost:27017", "mongodb://localhost:27017"),
+    ],
+)
+def test_mongodb_credentials_are_percent_encoded(raw, expected):
+    assert make_settings(mongodb_uri=raw).mongodb_uri.get_secret_value() == expected
