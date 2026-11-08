@@ -49,3 +49,9 @@ def test_sandbox_provider_defaults_to_local_and_langsmith_needs_a_key():
 )
 def test_repo_accepts_a_github_url(value):
     assert make_settings(shipwright_repo=value).shipwright_repo == "acme/taskboard-api"
+
+
+@pytest.mark.parametrize("field", ["openai_api_key", "github_pat", "jira_api_token", "mongodb_uri"])
+def test_required_secrets_must_not_be_blank(field):
+    with pytest.raises(ValidationError, match=field):
+        make_settings(**{field: " "})

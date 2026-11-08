@@ -84,6 +84,16 @@ class Settings(BaseSettings):
             raise ValueError("must not be empty")
         return v.strip()
 
+    @field_validator("openai_api_key", "github_pat", "jira_api_token", "mongodb_uri", mode="before")
+    @classmethod
+    def _required_secret_not_blank(cls, v: object) -> object:
+        """A required secret left as `KEY=` in `.env` fails now, not deep inside a run."""
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("must not be empty")
+        return v
+
     @field_validator("shipwright_repo")
     @classmethod
     def _validate_repo(cls, v: str) -> str:
