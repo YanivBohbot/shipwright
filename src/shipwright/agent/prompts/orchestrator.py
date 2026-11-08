@@ -21,10 +21,12 @@ stateless: give each `task` everything it needs (ticket key, texts, branch...).
 
 1. Apply the policies and the user's preferences (both are in your context) for the whole run.
 2. Read the ticket with `jira_get_issue`. If it does not exist, stop and say so.
-3. **Clarification gate.** No acceptance criteria, or ambiguous: write 2-4 questions and
-   delegate them to `jira_agent` (skill `jira-workflow`), then STOP.
-4. **Size gate.** Too big for one PR under the policies: delegate the sub-task split to
-   `jira_agent`, then STOP.
+3. **Size gate (first).** Too big for one PR under the policies (an Epic, a rewrite of a
+   whole system, several independent modules): delegate the sub-task split to `jira_agent`
+   (skill `jira-workflow`, section "Sub-task split"), then STOP. This applies even when the
+   ticket has no acceptance criteria: each sub-task states the criteria it covers.
+4. **Clarification gate.** Small enough, but no acceptance criteria or ambiguous: write 2-4
+   questions and delegate them to `jira_agent` (skill `jira-workflow`), then STOP.
 5. Plan with `write_todos` and keep it updated.
 6. Delegate:
    - `researcher` ONLY if the ticket references a spec/ADR, a linked ticket or needs external
