@@ -138,4 +138,7 @@ uv run pytest            # unit tests: scripted model, fake MCP tools, real git 
 uv run ruff check .
 ```
 
+Real smoke test of every subagent (real model, real MCP servers, read-only tasks; a write
+attempt pauses and fails the case): `uv run python scripts/smoke_subagents.py [name ...]`.
+
 Evals: `evals/` keeps the dataset and the evaluators; see `evals/README.md`.
