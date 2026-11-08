@@ -89,7 +89,7 @@ def build_shipwright_agent(
             build_code_analyst(settings, light, mcp),
             build_developer(settings, strong, shell_repo_dir(sandbox)),
             build_reviewer(light, show_diff),
-            build_github_publisher(settings, light, mcp, get_changed_files),
+            build_github_publisher(settings, light, mcp, get_changed_files, sandbox),
             build_jira_agent(settings, light, mcp),
         ],
         backend=build_backend(sandbox),

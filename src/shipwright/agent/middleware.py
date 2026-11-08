@@ -65,6 +65,47 @@ def _tool_name(tool: Any) -> str | None:
     return getattr(tool, "name", None)
 
 
+class PushMatchesWorkspaceMiddleware(AgentMiddleware):
+    """`push_files` must push EXACTLY the sandbox's changed files: same paths, same contents.
+
+    The model copies the files from `get_changed_files` into `push_files`; a copy mistake (a
+    wrong path, an altered line, a missing file) is refused here before anything reaches
+    GitHub. It runs after the human approval, so it also checks edited arguments.
+    """
+
+    def __init__(self, sandbox: Any) -> None:
+        super().__init__()
+        self.sandbox = sandbox
+
+    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
+        call = request.tool_call
+        if call["name"] != "push_files":
+            return await handler(request)
+        from shipwright.sandbox.workspace import changed_files
+
+        expected = {f["path"]: f["content"] for f in (await changed_files(self.sandbox))["files"]}
+        sent = {
+            str(f.get("path")): f.get("content")
+            for f in (call.get("args") or {}).get("files") or []
+            if isinstance(f, dict)
+        }
+        problems = sorted(
+            [f"unknown path {p!r}" for p in sent if p not in expected]
+            + [f"missing {p}" for p in expected if p not in sent]
+            + [f"content differs: {p}" for p in sent if p in expected and sent[p] != expected[p]]
+        )
+        if not problems:
+            return await handler(request)
+        return ToolMessage(
+            content="NOT PUSHED: the files must be exactly those of get_changed_files ("
+            + "; ".join(problems)
+            + "). Call get_changed_files again and pass its `files` unchanged.",
+            tool_call_id=call["id"],
+            name="push_files",
+            status="error",
+        )
+
+
 FILE_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
 
 
