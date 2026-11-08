@@ -17,15 +17,18 @@ go-ahead because they are outward actions).
 ```
 
 - `dependencies: ["."]` installs the project from `pyproject.toml` (`uv.lock` is present).
-- `graphs.shipwright` is the async factory `make_graph(config)`. It needs a `thread_id` to execute.
+- `graphs.shipwright` is the async factory `make_graph(config)`: for a run it opens the thread's
+  sandbox and clones the repo; for any other access (Studio reading the schema) it uses an
+  in-state backend, so no sandbox is created.
 - `env: ".env"`: `langgraph dev` loads it; `langgraph deploy` reads the same file and turns every
   non-empty variable into a **deployment secret** (it skips the reserved ones, see below).
 - `checkpointer.backend = "mongo"`: the Agent Server stores checkpoints in MongoDB. The connection
   string is NOT in the file: the server resolves `LS_MONGODB_URI`, then `MONGODB_URI`
   (`langgraph_api/config/_parse.py`). Atlas replica sets are supported. The **database name must be
   part of the URI** (`mongodb+srv://user:pass@cluster.mongodb.net/shipwright?retryWrites=true`).
-- The store of a deployment is the platform's (Postgres); there is no Mongo store there. Org
-  policies are therefore seeded at run time by `PolicySeedMiddleware`; no manual step.
+- The store of a deployment is the platform's (Postgres); there is no Mongo store there. It holds
+  the per-user `/memories/`. The policies and skills are packaged files (`agent/policies/`,
+  `agent/skills/`), so there is nothing to seed.
 - The audit trail still goes to MongoDB (`MONGODB_URI` + `MONGODB_DB`, collection `audit_log`).
 
 ## Secrets to configure
@@ -41,10 +44,10 @@ All variables of `.env.example` (they are the fields of `shipwright.core.config.
 | `LS_MONGODB_URI` | yes | same Atlas URI **including the database name**; used by the Mongo checkpointer |
 | `PINECONE_API_KEY`, `PINECONE_INDEX`, `PINECONE_NAMESPACE` | recommended | run `scripts/ingest_knowledge.py` first; without a key, local keyword search over `knowledge/` |
 | `LLAMA_CLOUD_API_KEY`, `TAVILY_API_KEY` | optional | PDF parsing at ingestion / `web_search` (disabled without it) |
-| `GITHUB_PAT`, `GITHUB_MCP_URL`, `SHIPWRIGHT_REPO` | yes | PAT with PR/contents write on the demo repo |
+| `GITHUB_PAT`, `GITHUB_MCP_URL`, `SHIPWRIGHT_REPO` | yes | PAT with PR/contents write on the demo repo; the repo must be public (cloned anonymously) |
 | `JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`, `JIRA_PROJECT` | yes | |
-| `SHIPWRIGHT_MODE` | must be `live` | `local` (LocalShellBackend, local Jira/GitHub) is for the terminal demo only |
-| `MAX_TEST_ATTEMPTS`, `MAX_REVIEW_CYCLES`, `ORCHESTRATOR_MODEL_CALL_LIMIT`, `SANDBOX_IDLE_TTL_SECONDS`, `ORG_ID` | optional | defaults 3 / 2 / 150 / 3600 / `default-org` |
+| `SANDBOX_PROVIDER` | must be `langsmith` | `local` would run the agent's shell commands on the server itself; LangSmith sandboxes must be enabled on the organization |
+| `MAX_TEST_ATTEMPTS`, `MAX_REVIEW_CYCLES`, `ORCHESTRATOR_MODEL_CALL_LIMIT`, `SANDBOX_IDLE_TTL_SECONDS` | optional | defaults 3 / 2 / 150 / 3600 |
 
 Network: the Atlas cluster must be reachable from the LangSmith data plane (add the data plane's
 egress IPs to the Atlas IP access list, or `0.0.0.0/0` for a throwaway demo cluster). Atlas must be
@@ -81,5 +84,5 @@ Other useful flags of `deploy`: `--deployment-id` (update an existing deployment
 2. Replay scenario 2 (`demo/tickets.yaml`, seeded with `scripts/seed_jira.py`); expected: PR on the demo repo, Jira comment and
    `In Review`.
 3. In Atlas, check the checkpointer collections receive documents (the langgraph-checkpoint-mongodb defaults are `checkpoints` and `checkpoint_writes`; the Agent Server may use its own names or database, so also look at the database in `LS_MONGODB_URI`) and that `audit_log` in `MONGODB_DB`
-   contains the `request_human_review`, `publish_pull_request` and `update_jira_ticket` events.
-4. Check `/policies/POLICIES.md` is readable in a run (the policy seed middleware wrote it).
+   contains the `create_branch`, `push_files`, `create_pull_request`, `jira_add_comment` and
+   `jira_transition_issue` events.
