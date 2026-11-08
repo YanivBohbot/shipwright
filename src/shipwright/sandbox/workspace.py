@@ -68,16 +68,21 @@ async def clone_repo(backend: SandboxBackendProtocol, repo: str) -> None:
     await run(backend, git('remote set-url --push origin "no-push://use-the-github-mcp-tools"'))
 
 
+# Compare the working tree with the cloned `main`, not HEAD: a stray local `git commit` by the
+# developer must not hide its changes from the review and the push.
+BASE = "origin/main"
+
+
 async def workspace_diff(backend: SandboxBackendProtocol) -> str:
-    """Unified diff of the working tree against HEAD, new files included."""
+    """Unified diff of the working tree against `origin/main`, new files included."""
     await run(backend, git("add -N ."))  # make new files visible to `git diff`
-    return await run(backend, git("--no-pager diff --no-color HEAD"))
+    return await run(backend, git(f"--no-pager diff --no-color {BASE}"))
 
 
 async def changed_files(backend: SandboxBackendProtocol) -> dict[str, list]:
     """`{"files": [{"path", "content"}], "deleted": [...]}`: what `push_files` must receive."""
     await run(backend, git("add -N ."))
-    status = await run(backend, git("--no-pager diff --name-status --no-renames HEAD"))
+    status = await run(backend, git(f"--no-pager diff --name-status --no-renames {BASE}"))
     entries = [line.split("\t", 1) for line in status.splitlines() if "\t" in line]
     deleted = [path for code, path in entries if code.startswith("D")]
     present = [path for code, path in entries if not code.startswith("D")]

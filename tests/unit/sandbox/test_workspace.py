@@ -32,9 +32,18 @@ async def test_failed_command_raises():
 
 
 async def test_diff_includes_new_files():
-    box = FakeSandbox().on("diff --no-color HEAD", "diff --git a/x b/x")
+    box = FakeSandbox().on("diff --no-color origin/main", "diff --git a/x b/x")
     assert await workspace_diff(box) == "diff --git a/x b/x"
     assert any("add -N ." in c for c in box.executed)
+
+
+async def test_diffs_compare_with_origin_main_so_local_commits_are_kept():
+    """A developer `git commit` moves HEAD; the diff and the push must still include it."""
+    box = FakeSandbox({f"{REPO_DIR}/a.py": b"x\n"}).on("--name-status", "M\ta.py\n")
+    await workspace_diff(box)
+    await changed_files(box)
+    diffs = [c for c in box.executed if " diff " in c]
+    assert diffs and all("origin/main" in c and " HEAD" not in c for c in diffs)
 
 
 async def test_changed_files_returns_contents_and_deletions():
