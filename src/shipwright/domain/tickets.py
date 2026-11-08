@@ -1,29 +1,15 @@
-"""Ticket model and pure parsing helpers (no I/O): key, acceptance criteria, spec refs, branch."""
+"""Ticket helpers: key normalisation, acceptance criteria, the demo tickets file."""
 
 import re
-from dataclasses import dataclass
+from pathlib import Path
 
-_SPEC_REF_RE = re.compile(r"\b(?:[A-Z]+(?:-[A-Z0-9]+)*-v\d+|ADR-\d{3})\b")
+import yaml
+
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*(.*?)\s*#*\s*$")
 _AC_HEADING_RE = re.compile(r"^acceptance criteria:?$", re.IGNORECASE)
 _CHECKBOX_RE = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s*(.+?)\s*$")
 _BULLET_RE = re.compile(r"^\s*[-*]\s+(?:\[[ xX]\]\s*)?(.+?)\s*$")
 _AC_LINE_RE = re.compile(r"^\s*(?:[-*]\s*)?(AC-\d+\b.*?)\s*$")
-
-
-class TicketNotFound(Exception):
-    """Raised when a Jira ticket does not exist (or is not visible)."""
-
-
-@dataclass(frozen=True)
-class Ticket:
-    key: str
-    summary: str
-    description: str
-    status: str
-    acceptance_criteria: list[str]
-    spec_refs: list[str]
-    issue_type: str
 
 
 def parse_ticket_key(raw: str, project: str) -> str:
@@ -32,10 +18,6 @@ def parse_ticket_key(raw: str, project: str) -> str:
     if not re.fullmatch(rf"{re.escape(project.upper())}-\d+", key):
         raise ValueError(f"Invalid ticket key {raw!r}: expected format {project.upper()}-<number>")
     return key
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    return list(dict.fromkeys(items))
 
 
 def extract_acceptance_criteria(description: str) -> list[str]:
@@ -57,18 +39,19 @@ def extract_acceptance_criteria(description: str) -> list[str]:
         m = _CHECKBOX_RE.match(line) or _AC_LINE_RE.match(line)
         if m:
             found.append(m.group(1))
-    return _dedupe(found)
+    return list(dict.fromkeys(found))
 
 
-def extract_spec_refs(description: str) -> list[str]:
-    """Spec/ADR references (e.g. EXPORT-CSV-v2, ADR-001), in order of first appearance."""
-    return _dedupe(_SPEC_REF_RE.findall(description))
+DEMO_TICKET_FIELDS = ("scenario", "issue_type", "expected", "summary", "description")
 
 
-def branch_root(key: str) -> str:
-    """First PR branch of a ticket: ``"SHIP-2"`` -> ``"shipwright/ship-2"`` (always lowercase).
-
-    Revisions are ``<root>-r2``, ``<root>-r3``... Shared by everything that creates or looks
-    for the PR branch, so they can never disagree.
-    """
-    return f"shipwright/{key.strip().lower()}"
+def load_demo_tickets(path: Path) -> list[dict]:
+    """The demo tickets of `demo/tickets.yaml` (seeded into Jira by `scripts/seed_jira.py`)."""
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError(f"{path}: expected a list of demo tickets")
+    for i, entry in enumerate(data, start=1):
+        if not isinstance(entry, dict) or any(f not in entry for f in DEMO_TICKET_FIELDS):
+            fields = ", ".join(DEMO_TICKET_FIELDS)
+            raise ValueError(f"{path}: ticket #{i} needs the fields {fields}")
+    return data

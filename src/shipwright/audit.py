@@ -1,21 +1,15 @@
-"""Audit trail of write-capable tool calls: the event, secret redaction and where it is stored.
+"""Audit trail of the write tool calls: the event, secret redaction, the MongoDB `audit_log`.
 
-Local mode appends JSON lines to `tmp/audit.jsonl`; live mode writes to MongoDB `audit_log`.
-The middleware that produces events lives with the agent.
+The middleware that produces events lives with the agent (`agent/middleware.py`).
 """
 
-import asyncio
 import functools
-import json
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from shipwright.core.config import Settings
-
-PREVIEW_MAX = 500
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s,;\"']+"),
@@ -47,27 +41,11 @@ class AuditEvent:
     tool: str
     args: dict
     outcome: Literal["ok", "error"]
-    result_preview: str  # at most PREVIEW_MAX characters
+    result_preview: str
 
 
 class AuditSink(Protocol):
     async def record(self, event: AuditEvent) -> None: ...
-
-
-class JsonlAuditSink:
-    """Appends one JSON object per event to `path` (created on first write)."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-
-    def _append(self, line: str) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-
-    async def record(self, event: AuditEvent) -> None:
-        data = {**asdict(event), "ts": event.ts.isoformat()}
-        await asyncio.to_thread(self._append, json.dumps(data, ensure_ascii=False, default=str))
 
 
 class MongoAuditSink:
@@ -97,8 +75,4 @@ def _shared_mongo_sink(uri: str, db: str) -> MongoAuditSink:
 
 
 def build_audit_sink(settings: Settings) -> AuditSink:
-    if settings.mode == "local":
-        return JsonlAuditSink(settings.tmp_dir / "audit.jsonl")
-    if settings.mongodb_uri is None:
-        raise ValueError("MONGODB_URI is required for the live audit log")
     return _shared_mongo_sink(settings.mongodb_uri.get_secret_value(), settings.mongodb_db)

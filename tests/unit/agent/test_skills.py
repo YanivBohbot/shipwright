@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from shipwright.agent.backend import SKILLS_DIR
+from shipwright.agent.backend import AGENT_DIR
+
+SKILLS_DIR = AGENT_DIR / "skills"
 
 EXPECTED = ["coding-conventions", "jira-workflow", "pr-template", "testing-guidelines"]
 
@@ -44,12 +46,19 @@ def test_pr_template_sections():
         assert heading in text
     positions = [text.index(h) for h in PR_SECTIONS]
     assert positions == sorted(positions)
-    assert "{jira_url}/browse/{key}" in text
+    for tool in ["get_changed_files", "create_branch", "push_files", "create_pull_request"]:
+        assert tool in text
 
 
 def test_jira_workflow_mentions_tools_and_transition():
     text = (SKILLS_DIR / "jira-workflow" / "SKILL.md").read_text(encoding="utf-8")
-    for needle in ["update_jira_ticket", "create_jira_subtasks", "In Review"]:
+    for needle in [
+        "jira_add_comment",
+        "jira_create_issue",
+        "jira_get_transitions",
+        "jira_transition_issue",
+        "In Review",
+    ]:
         assert needle in text
 
 
@@ -62,3 +71,13 @@ def test_testing_guidelines_has_command_and_naming():
 def test_pr_template_verdict_wording():
     text = (SKILLS_DIR / "pr-template" / "SKILL.md").read_text(encoding="utf-8")
     assert "pass | changes_requested" in text and "APPROVE | CHANGES REQUESTED" not in text
+
+
+def test_skills_only_name_tools_the_agent_has():
+    """Every tool a skill tells the agent to call exists (no stale custom tool names)."""
+    from shipwright.integrations.mcp import ALLOWED_TOOLS
+
+    for name in ["update_jira_ticket", "create_jira_subtasks", "publish_pull_request"]:
+        for skill in SKILLS_DIR.glob("*/SKILL.md"):
+            assert name not in skill.read_text(encoding="utf-8"), (skill, name)
+    assert {"jira_add_comment", "push_files"} <= set(ALLOWED_TOOLS)

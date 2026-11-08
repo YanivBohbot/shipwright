@@ -1,115 +1,32 @@
 import pytest
 from pydantic import ValidationError
 
-from shipwright.core.config import LOCAL_REPO, Settings
-
-LIVE_ENV = {
-    "GITHUB_PAT": "ghp_supersecretvalue",
-    "SHIPWRIGHT_REPO": "acme/taskboard-api",
-    "JIRA_URL": "https://acme.atlassian.net",
-    "JIRA_USERNAME": "bot@acme.com",
-    "JIRA_API_TOKEN": "jira-fake",
-    "MONGODB_URI": "mongodb://fake:27017",
-    "LANGSMITH_API_KEY": "ls-fake",
-}
+from shipwright.core.config import Settings
+from tests.fakes import REQUIRED_FAKES, make_settings
 
 
-@pytest.fixture(autouse=True)
-def clean_env(monkeypatch):
-    """Only what each test sets is visible (no real env, no `.env`: `_env_file=None`)."""
-    names = {n.upper() for n in Settings.model_fields}
-    names |= {"SHIPWRIGHT_MODE", "SHIPWRIGHT_LANGSMITH_API_KEY"}
-    for name in names:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-openai")
+def test_repo_parts_and_jira_base_url():
+    s = make_settings(jira_url="https://acme.atlassian.net/")
+    assert (s.repo_owner, s.repo_name) == ("acme", "taskboard-api")
+    assert s.jira_base_url == "https://acme.atlassian.net"
 
 
-def test_local_mode_needs_only_openai_key():
-    s = Settings(_env_file=None)
-    assert s.mode == "local"
-    assert s.model_strong == "openai:gpt-5.5"
-    assert s.model_light == "openai:gpt-5.4-mini"
-    assert s.github_pat is None and s.mongodb_uri is None and s.pinecone_api_key is None
-    assert s.repo == LOCAL_REPO
-    assert s.jira_project == "SHIP"
-    assert s.max_test_attempts == 3 and s.max_review_cycles == 2
+@pytest.mark.parametrize("field", ["shipwright_repo", "jira_url", "jira_username"])
+def test_required_values_must_not_be_blank(field):
+    with pytest.raises(ValidationError, match=field):
+        make_settings(**{field: "  "})
 
 
-def test_openai_key_is_always_required(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY")
-    with pytest.raises(ValidationError, match="openai_api_key"):
-        Settings(_env_file=None)
+def test_missing_required_secret_is_reported():
+    values = {k: v for k, v in REQUIRED_FAKES.items() if k != "github_pat"}
+    with pytest.raises(ValidationError, match="github_pat"):
+        Settings(_env_file=None, **values)
 
 
-def test_mode_is_read_from_shipwright_mode(monkeypatch):
-    for k, v in LIVE_ENV.items():
-        monkeypatch.setenv(k, v)
-    monkeypatch.setenv("SHIPWRIGHT_MODE", "live")
-    s = Settings(_env_file=None)
-    assert s.mode == "live"
-    assert s.repo == "acme/taskboard-api"
+def test_repo_format_is_checked():
+    with pytest.raises(ValidationError, match="owner/name"):
+        make_settings(shipwright_repo="no-slash")
 
 
-def test_live_mode_names_every_missing_secret(monkeypatch):
-    monkeypatch.setenv("SHIPWRIGHT_MODE", "live")
-    monkeypatch.setenv("JIRA_URL", "https://acme.atlassian.net")
-    with pytest.raises(ValidationError) as err:
-        Settings(_env_file=None)
-    msg = str(err.value)
-    for name in (
-        "GITHUB_PAT",
-        "SHIPWRIGHT_REPO",
-        "JIRA_USERNAME",
-        "JIRA_API_TOKEN",
-        "MONGODB_URI",
-        "LANGSMITH_API_KEY",
-    ):
-        assert name in msg
-    assert "JIRA_URL," not in msg and not msg.rstrip().endswith("JIRA_URL")
-
-
-def test_invalid_mode_is_rejected(monkeypatch):
-    monkeypatch.setenv("SHIPWRIGHT_MODE", "staging")
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None)
-
-
-def test_langsmith_key_accepts_deployment_alias(monkeypatch):
-    monkeypatch.setenv("SHIPWRIGHT_LANGSMITH_API_KEY", "ls-deploy")
-    s = Settings(_env_file=None)
-    assert s.langsmith_api_key is not None
-    assert s.langsmith_api_key.get_secret_value() == "ls-deploy"
-
-
-def test_bad_repo_format_is_rejected(monkeypatch):
-    monkeypatch.setenv("SHIPWRIGHT_REPO", "noslash")
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None)
-
-
-def test_secrets_not_in_repr(monkeypatch):
-    for k, v in LIVE_ENV.items():
-        monkeypatch.setenv(k, v)
-    s = Settings(_env_file=None)
-    assert "ghp_supersecretvalue" not in repr(s) and "sk-fake-openai" not in str(s)
-
-
-def test_generic_mode_env_var_is_ignored(monkeypatch):
-    monkeypatch.setenv("MODE", "live")  # only SHIPWRIGHT_MODE selects the mode
-    assert Settings(_env_file=None).mode == "local"
-
-
-def test_empty_live_secret_counts_as_missing(monkeypatch):
-    for k, v in LIVE_ENV.items():
-        monkeypatch.setenv(k, v)
-    monkeypatch.setenv("SHIPWRIGHT_MODE", "live")
-    monkeypatch.setenv("JIRA_API_TOKEN", "")
-    with pytest.raises(ValidationError, match="requires: JIRA_API_TOKEN"):
-        Settings(_env_file=None)
-
-
-def test_empty_optional_secret_is_none(monkeypatch):
-    monkeypatch.setenv("LLAMA_CLOUD_API_KEY", "")
-    monkeypatch.setenv("TAVILY_API_KEY", "  ")
-    s = Settings(_env_file=None)
-    assert s.llama_cloud_api_key is None and s.tavily_api_key is None
+def test_empty_optional_secret_is_unset():
+    assert make_settings(tavily_api_key="  ").tavily_api_key is None

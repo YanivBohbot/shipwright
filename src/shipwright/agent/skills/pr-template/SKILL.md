@@ -1,65 +1,57 @@
 ---
 name: pr-template
-description: Exact pull request title and body template (Summary, Linked ticket, Acceptance criteria with evidence, Tests, Self-review, Notes) for Shipwright PRs. Use when the orchestrator writes the PR before publishing.
+description: How Shipwright publishes with the GitHub MCP tools (get_changed_files, list_branches, create_branch, push_files, create_pull_request) and the exact PR title and body template. Use before opening a pull request.
 ---
 
-# Pull request template
+# Publishing a pull request
 
-Audience: the **orchestrator**, when preparing the title and body passed to the publish tool.
-Fill every section; write `None.` rather than deleting a section. Keep the headings exactly as
-below, in this order, because reviewers and tooling rely on them. Respect `/policies/POLICIES.md`
-(no credentials in PR text, size limit, ADR-001 reporting).
+Audience: the **orchestrator**. Each GitHub write is shown to a human first; what they approve
+is exactly what is sent, so the PR text must match the diff.
+
+## Steps
+
+1. `get_changed_files()` returns `{"files": [{"path", "content"}], "deleted": [...]}`.
+2. `list_branches(owner, repo)`: the branch is `shipwright/<key lowercase>` (for example
+   `shipwright/ship-12`); if it exists, use `shipwright/ship-12-r2`, then `-r3`...
+3. `create_branch(owner, repo, branch=<branch>, from_branch="main")`.
+4. `push_files(owner, repo, branch=<branch>, files=<files from step 1, unchanged>,
+   message="SHIP-12: <imperative summary>")`. Never retype or edit file contents yourself.
+5. `create_pull_request(owner, repo, head=<branch>, base="main", title=..., body=...)`, with
+   `draft=true` when the tests are failing.
 
 ## Title
 
-Format: `[KEY] <imperative summary>`, for example `[TB-12] Add status filter to task listing`.
-
-The publish tool **adds the `[KEY]` prefix automatically**. Pass only the imperative summary
-(`Add status filter to task listing`) so the key is not duplicated. Keep it under about 70
-characters, in the imperative mood, with no trailing period.
+`[KEY] <imperative summary>`, e.g. `[SHIP-12] Add status filter to task listing`: under about
+70 characters, imperative mood, no trailing period.
 
 ## Body
 
-The body must have exactly this structure:
+Keep these headings, in this order; write `None.` rather than deleting a section.
 
 ```markdown
 ## Summary
 <2-4 sentences: what changed and why, from the user's point of view.>
 
 ## Linked ticket
-<KEY> - {jira_url}/browse/{key}
+<KEY> - <jira_url>/browse/<KEY>
 
 ## Acceptance criteria
 - [x] AC1: <criterion text> - evidence: `test_ac1_...` passes (<file>)
-- [x] AC2: <criterion text> - evidence: <test name or behaviour verified>
-- [ ] AC3: <criterion text> - not met: <reason>
+- [ ] AC2: <criterion text> - not met: <reason>
 
 ## Tests
-<Command run, result line (passed/failed/xfail counts), and the new or changed tests.>
+<Command run (`uv run pytest -q`), result line (passed/failed/xfail counts), new tests.>
 
 ## Self-review
 Verdict: <pass | changes_requested, copied verbatim from the reviewer>
-Risks: <risks and open points reported by the reviewer, or "None identified.">
+Risks: <the reviewer's risks, or "None identified.">
 
 ## Notes
-<Follow-ups, assumptions, ticket ambiguities resolved, anything a human reviewer should know.
-"None." if empty.>
+<Follow-ups, assumptions, ambiguities resolved. "None." if empty.>
 ```
 
-### Filling the sections
-
-- **Linked ticket**: `{jira_url}` is the base URL of the Jira site and is given to you in the
-  orchestrator prompt; `{key}` is the ticket key (for example `TB-12`). Substitute both so the
-  line reads like `TB-12 - https://example.atlassian.net/browse/TB-12`. Never leave the braces
-  in the final text and never invent a URL.
-- **Acceptance criteria**: one checkbox per AC from the ticket, in order, using the ticket's
-  wording. Tick `[x]` only with concrete evidence (a test name that passes, or a verified
-  behaviour). Leave `[ ]` with the reason if an AC is not fully met; do not tick on faith.
-- **Tests**: the command is `uv run pytest -q` from the repository root, with the counts from
-  the last run reported by the developer.
-- **Self-review**: copy the reviewer's verdict and its risks faithfully, including any that
-  remain unresolved after the fix cycles. Do not soften them.
-- **Notes**: mention anything outside the AC scope you deliberately left alone.
-
-The PR body is part of what the human approves, so it must match the diff exactly: do not
-describe changes that are not in the diff.
+- **Linked ticket**: use the Jira site URL from your prompt; never invent one.
+- **Acceptance criteria**: one checkbox per AC, in ticket order and wording. Tick only with
+  concrete evidence.
+- **Self-review**: copy the verdict and risks faithfully, do not soften them. If the tests
+  failed, say "Not reviewed: tests failing." and explain in Notes.

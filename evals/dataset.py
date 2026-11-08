@@ -8,8 +8,7 @@ from typing import Any
 
 import langsmith
 
-from shipwright.domain.tickets import extract_acceptance_criteria
-from shipwright.integrations.jira.local_jira import load_demo_tickets
+from shipwright.domain.tickets import extract_acceptance_criteria, load_demo_tickets
 
 TICKETS = Path(__file__).resolve().parents[1] / "demo" / "tickets.yaml"
 DATASET_NAME = "shipwright-scenarios"
@@ -37,16 +36,16 @@ def build_examples(project: str = "SHIP") -> list[dict[str, Any]]:
     """One example per demo ticket; pure (no network)."""
     return [
         {
-            "id": example_id(t.scenario),
-            "inputs": {"ticket_key": f"{project}-{t.scenario}", "scenario": t.scenario},
+            "id": example_id(t["scenario"]),
+            "inputs": {"ticket_key": f"{project}-{t['scenario']}", "scenario": t["scenario"]},
             "outputs": {
-                "expected": t.expected,
-                "expected_subagents": EXPECTED_SUBAGENTS.get(t.scenario, []),
-                "acceptance_criteria": extract_acceptance_criteria(t.description),
+                "expected": t["expected"],
+                "expected_subagents": EXPECTED_SUBAGENTS.get(t["scenario"], []),
+                "acceptance_criteria": extract_acceptance_criteria(t["description"]),
             },
-            "metadata": {"summary": t.summary, "issue_type": t.issue_type},
+            "metadata": {"summary": t["summary"], "issue_type": t["issue_type"]},
         }
-        for t in sorted(load_demo_tickets(TICKETS), key=lambda t: t.scenario)
+        for t in sorted(load_demo_tickets(TICKETS), key=lambda t: t["scenario"])
     ]
 
 

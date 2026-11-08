@@ -1,66 +1,38 @@
-"""Test-only doubles (no network): settings, gateways, sandbox, workspace, models, tools."""
+"""Test-only doubles (no network): settings, sandbox, MCP tools, chat model, vector store."""
 
-import hashlib
-import re
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Any
 
-from deepagents.backends.protocol import (
-    ExecuteResponse,
-    FileDownloadResponse,
-    FileUploadResponse,
-)
+from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import BaseMessage, ToolMessage
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.vectorstores import VectorStore
 
-from shipwright.core import config as core_config
-from shipwright.domain.tickets import Ticket, TicketNotFound
-from shipwright.integrations.github.gateway import FileChange
-from shipwright.sandbox.workspace import WorkspaceError
+from shipwright.core.config import Settings
 
-_NO_SECRETS: dict[str, Any] = {
-    "langsmith_api_key": None,
-    "mongodb_uri": None,
-    "pinecone_api_key": None,
-    "llama_cloud_api_key": None,
-    "tavily_api_key": None,
-    "github_pat": None,
-    "shipwright_repo": None,
-    "jira_url": None,
-    "jira_username": None,
-    "jira_api_token": None,
-}
-_LIVE_FAKES: dict[str, Any] = {
+REQUIRED_FAKES: dict[str, Any] = {
+    "openai_api_key": "sk-fake-openai",
     "langsmith_api_key": "ls-fake",
-    "mongodb_uri": "mongodb://fake:27017",
     "github_pat": "ghp_fake",
     "shipwright_repo": "acme/taskboard-api",
     "jira_url": "https://acme.atlassian.net",
     "jira_username": "bot@acme.com",
     "jira_api_token": "jira-fake",
+    "mongodb_uri": "mongodb://fake:27017",
+    "pinecone_api_key": None,
+    "llama_cloud_api_key": None,
+    "tavily_api_key": None,
 }
 
 
-def make_settings(**overrides: Any) -> core_config.Settings:
-    """New-layout `core.config.Settings` with fake values, ignoring `.env` and the environment.
-
-    Local mode by default (every optional secret is None); `mode="live"` fills fake live secrets.
-    """
-    mode = overrides.pop("mode", "local")
-    values: dict[str, Any] = {"openai_api_key": "sk-fake-openai", **_NO_SECRETS}
-    if mode == "live":
-        values.update(_LIVE_FAKES)
-    return core_config.Settings(_env_file=None, shipwright_mode=mode, **{**values, **overrides})
+def make_settings(**overrides: Any) -> Settings:
+    """Settings with fake values, ignoring `.env` and the environment."""
+    return Settings(_env_file=None, **{**REQUIRED_FAKES, **overrides})
 
 
 class MemoryAuditSink:
-    """In-memory `AuditSink` recording events."""
-
     def __init__(self) -> None:
         self.events: list[Any] = []
 
@@ -68,8 +40,64 @@ class MemoryAuditSink:
         self.events.append(event)
 
 
+class FakeSandbox:
+    """In-memory sandbox: a dict of files plus `command substring -> (output, exit code)`."""
+
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files = dict(files or {})
+        self.handlers: list[tuple[str, str, int]] = []
+        self.executed: list[str] = []
+
+    @property
+    def id(self) -> str:
+        return "fake-sandbox"
+
+    def on(self, pattern: str, output: str = "", exit_code: int = 0) -> "FakeSandbox":
+        self.handlers.append((pattern, output, exit_code))
+        return self
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        self.executed.append(command)
+        output, code = next(((o, c) for p, o, c in self.handlers if p in command), ("", 0))
+        return ExecuteResponse(output=output, exit_code=code)
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        raise NotImplementedError("tests use the async API")
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return [
+            FileDownloadResponse(path=p, content=self.files[p], error=None)
+            if p in self.files
+            else FileDownloadResponse(path=p, content=None, error="file_not_found")
+            for p in paths
+        ]
+
+
+def fake_mcp_tool(name: str, answer: str = "ok", calls: list | None = None) -> BaseTool:
+    """A tool with an MCP tool's name, recording its arguments in `calls`."""
+    recorded = calls if calls is not None else []
+
+    async def run(**kwargs: Any) -> str:
+        recorded.append((name, kwargs))
+        return answer
+
+    return StructuredTool.from_function(
+        coroutine=run,
+        name=name,
+        description=f"Fake MCP tool {name}.",
+        args_schema={"type": "object", "properties": {}, "additionalProperties": True},
+    )
+
+
+class ScriptedChatModel(GenericFakeChatModel):
+    """GenericFakeChatModel that accepts `bind_tools` (returns itself)."""
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "ScriptedChatModel":  # type: ignore[override]
+        return self
+
+
 class FakeVectorStore(VectorStore):
-    """In-memory VectorStore recording add_texts calls; search is a substring/overlap match."""
+    """In-memory VectorStore recording add_texts calls; search is a word-overlap match."""
 
     def __init__(self) -> None:
         self.ids: list[str] = []
@@ -87,14 +115,7 @@ class FakeVectorStore(VectorStore):
         )
         return store
 
-    def add_texts(
-        self,
-        texts: Iterable[str],
-        metadatas: list[dict] | None = None,
-        *,
-        ids: list[str] | None = None,
-        **kwargs: Any,
-    ) -> list[str]:
+    def add_texts(self, texts, metadatas=None, *, ids=None, **kwargs) -> list[str]:  # type: ignore[override]
         texts = list(texts)
         metadatas = metadatas or [{} for _ in texts]
         ids = ids or [f"auto{i}" for i in range(len(self.ids), len(self.ids) + len(texts))]
@@ -103,7 +124,7 @@ class FakeVectorStore(VectorStore):
         self.ids.extend(ids)
         return ids
 
-    async def aadd_texts(self, texts, metadatas=None, *, ids=None, **kwargs) -> list[str]:
+    async def aadd_texts(self, texts, metadatas=None, *, ids=None, **kwargs) -> list[str]:  # type: ignore[override]
         return self.add_texts(texts, metadatas, ids=ids, **kwargs)
 
     def similarity_search(self, query: str, k: int = 4, **kwargs: Any) -> list[Document]:
@@ -122,348 +143,3 @@ class FakeVectorStore(VectorStore):
         store = cls()
         store.add_texts(texts, metadatas)
         return store
-
-
-class FakeTool:
-    """Minimal async stand-in for a LangChain BaseTool: records ainvoke args, returns or raises.
-
-    `result` may be a value, or a callable taking the args dict and returning the value.
-    """
-
-    def __init__(
-        self,
-        name: str = "fake_tool",
-        result: Any = None,
-        raises: Exception | None = None,
-        error_content: str | None = None,
-    ):
-        self.name = name
-        self.result = result
-        self.raises = raises
-        self.error_content = error_content  # mimic adapter handle_tool_errors=True output
-        self.calls: list[dict[str, Any]] = []
-
-    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        call_id = None
-        if isinstance(input, dict) and input.get("type") == "tool_call":
-            call_id, input = input["id"], input["args"]
-        self.calls.append(input)
-        if self.raises is not None:
-            raise self.raises
-        if self.error_content is not None:
-            return ToolMessage(self.error_content, tool_call_id=call_id or "x", status="error")
-        result = self.result(input) if callable(self.result) else self.result
-        if call_id is not None:
-            return ToolMessage(content=result if result is not None else "", tool_call_id=call_id)
-        return result
-
-
-class FakeJiraGateway:
-    """In-memory JiraGateway recording writes."""
-
-    def __init__(self, tickets: dict[str, Ticket] | None = None) -> None:
-        self.tickets = dict(tickets or {})
-        self.comments: list[tuple[str, str]] = []
-        self.transitions: list[tuple[str, str]] = []
-        self.subtasks: list[tuple[str, str, str]] = []
-        self.issues: list[tuple[str, str, str, str]] = []
-
-    async def get_issue(self, key: str) -> Ticket:
-        if key not in self.tickets:
-            raise TicketNotFound(key)
-        return self.tickets[key]
-
-    async def add_comment(self, key: str, body: str) -> str:
-        self.comments.append((key, body))
-        return str(len(self.comments))
-
-    async def transition(self, key: str, to_status: str) -> None:
-        self.transitions.append((key, to_status))
-
-    async def create_subtask(self, parent_key: str, summary: str, description: str) -> str:
-        self.subtasks.append((parent_key, summary, description))
-        return f"{parent_key.rsplit('-', 1)[0]}-{100 + len(self.subtasks)}"
-
-    async def create_issue(
-        self, project: str, summary: str, description: str, issue_type: str
-    ) -> str:
-        self.issues.append((project, summary, description, issue_type))
-        return f"{project}-{200 + len(self.issues)}"
-
-
-FAKE_PR_URL = "https://github.com/fake/repo/pull/1"
-FAKE_BASE_SHA = "b" * 40  # default head sha of every fake branch and fake workspace base
-
-
-class FakeGitHubGateway:
-    """In-memory GitHubGateway recording writes. `open_prs` maps head branch -> PR URL."""
-
-    def __init__(
-        self,
-        existing_branches: Iterable[str] = (),
-        open_prs: dict[str, str] | None = None,
-        branch_shas: dict[str, str] | None = None,
-    ) -> None:
-        self.existing_branches = set(existing_branches)
-        self.open_prs = dict(open_prs or {})
-        self.branch_shas = dict(branch_shas or {})  # branch -> head sha (default FAKE_BASE_SHA)
-        self.list_calls = 0
-        self.branches: list[tuple[str, str, str]] = []
-        self.pushes: list[tuple[str, str, list[FileChange], str]] = []
-        self.prs: list[dict[str, Any]] = []
-        self.repos: list[str] = []  # repo argument of EVERY call, reads included
-
-    async def create_branch(self, repo: str, branch: str, from_branch: str = "main") -> None:
-        self.repos.append(repo)
-        self.branches.append((repo, branch, from_branch))
-        self.existing_branches.add(branch)
-        # a new branch points at its source's head unless a test pre-configured its sha
-        self.branch_shas.setdefault(branch, self.branch_shas.get(from_branch, FAKE_BASE_SHA))
-
-    async def push_files(
-        self, repo: str, branch: str, files: list[FileChange], message: str
-    ) -> str:
-        self.repos.append(repo)
-        self.pushes.append((repo, branch, list(files), message))
-        return f"sha{len(self.pushes)}"
-
-    async def create_pull_request(
-        self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False
-    ) -> str:
-        self.repos.append(repo)
-        self.prs.append(
-            {"repo": repo, "head": head, "base": base, "title": title, "body": body, "draft": draft}
-        )
-        url = FAKE_PR_URL if not self.prs[:-1] else f"{FAKE_PR_URL[:-1]}{len(self.prs)}"
-        self.open_prs[head] = url
-        return url
-
-    async def list_branch_names(self, repo: str) -> set[str]:
-        self.repos.append(repo)
-        self.list_calls += 1
-        return set(self.existing_branches)
-
-    async def get_branch_sha(self, repo: str, branch: str) -> str:
-        self.repos.append(repo)
-        return self.branch_shas.get(branch, FAKE_BASE_SHA)
-
-    async def find_open_pull_request(self, repo: str, head: str) -> str | None:
-        self.repos.append(repo)
-        return self.open_prs.get(head)
-
-
-_REDIRECT_RE = re.compile(r'>\s*"([^"]+)"\s*$')
-
-
-class FakeSandbox:
-    """In-memory sandbox backend: a dict of files plus a table `command pattern -> response`.
-
-    Mimics a LangSmith sandbox (POSIX paths, shell paths == virtual paths). Each handler is
-    matched by substring against the executed command (first match wins). When a matched
-    command ends with a `> "<path>"` redirect, `redirect` bytes are written to that path.
-    `effect(sandbox)` runs side effects (e.g. a clone creating `.git/HEAD`). Unmatched commands
-    succeed with empty output. With `structured_exit=False` the exit code is only reported in
-    the output as `[Command ... exit code N]` (exercises the parse fallback).
-    """
-
-    def __init__(
-        self, files: dict[str, bytes] | None = None, *, structured_exit: bool = True
-    ) -> None:
-        self.files: dict[str, bytes] = dict(files or {})
-        self.structured_exit = structured_exit
-        self.handlers: list[tuple[str, dict[str, Any]]] = []
-        self.executed: list[str] = []
-        self.deleted: list[str] = []
-
-    @property
-    def id(self) -> str:
-        return "fake-sandbox"
-
-    def on(
-        self,
-        pattern: str,
-        *,
-        output: str = "",
-        exit_code: int = 0,
-        redirect: bytes = b"",
-        effect: Callable[["FakeSandbox"], None] | None = None,
-    ) -> "FakeSandbox":
-        self.handlers.append(
-            (
-                pattern,
-                {"output": output, "exit_code": exit_code, "redirect": redirect, "effect": effect},
-            )
-        )
-        return self
-
-    def count(self, pattern: str) -> int:
-        return sum(pattern in c for c in self.executed)
-
-    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        self.executed.append(command)
-        spec = next((h for p, h in self.handlers if p in command), None) or {
-            "output": "",
-            "exit_code": 0,
-            "redirect": b"",
-            "effect": None,
-        }
-        if spec["effect"] is not None:
-            spec["effect"](self)
-        if (m := _REDIRECT_RE.search(command)) is not None and spec["exit_code"] == 0:
-            self.files[m.group(1)] = spec["redirect"]
-        output, code = spec["output"], spec["exit_code"]
-        if self.structured_exit:
-            return ExecuteResponse(output=output, exit_code=code)
-        verdict = "succeeded" if code == 0 else "failed"
-        return ExecuteResponse(output=f"{output}\n[Command {verdict} with exit code {code}]")
-
-    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        return self.execute(command, timeout=timeout)
-
-    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        for path, content in files:
-            self.files[path] = content
-        return [FileUploadResponse(path=p, error=None) for p, _ in files]
-
-    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        return self.upload_files(files)
-
-    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        return [
-            FileDownloadResponse(path=p, content=self.files[p], error=None)
-            if p in self.files
-            else FileDownloadResponse(path=p, content=None, error="file_not_found")
-            for p in paths
-        ]
-
-    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        return self.download_files(paths)
-
-    async def adelete(self, file_path: str) -> None:
-        self.deleted.append(file_path)
-        self.files.pop(file_path, None)
-
-
-@dataclass
-class FakeSandboxInfo:
-    name: str
-    status: str = "ready"
-
-
-class FakeSandboxClient:
-    """Stand-in for `langsmith.sandbox.SandboxClient` (sync API), recording calls."""
-
-    def __init__(self, sandboxes: Iterable[FakeSandboxInfo] = ()) -> None:
-        self.sandboxes = list(sandboxes)
-        self.created: list[dict[str, Any]] = []
-        self.deleted: list[str] = []
-
-    def list_sandboxes(self) -> list[FakeSandboxInfo]:
-        return list(self.sandboxes)
-
-    def create_sandbox(self, *, name: str, idle_ttl_seconds: int | None = None, **kwargs: Any):
-        self.created.append({"name": name, "idle_ttl_seconds": idle_ttl_seconds, **kwargs})
-        sandbox = FakeSandboxInfo(name=name)
-        self.sandboxes.append(sandbox)
-        return sandbox
-
-    def delete_sandbox(self, name: str) -> None:
-        self.deleted.append(name)
-        self.sandboxes = [s for s in self.sandboxes if s.name != name]
-
-
-class FakeWorkspace:
-    """Duck-typed Workspace: a fixed diff, changed files and base files.
-
-    `hashes`, when given, is the sequence returned by successive hash computations (the last
-    value repeats) - simulates the tree changing between two reads. `mismatch` makes
-    `files_matching_approval` refuse like a blob-sha mismatch would.
-    """
-
-    def __init__(
-        self,
-        diff: str = "",
-        files: list[FileChange] | None = None,
-        base_files: dict[str, str] | None = None,
-        hashes: list[str] | None = None,
-        base: str = FAKE_BASE_SHA,
-        repo: str = "acme/taskboard-api",
-        mismatch: str | None = None,
-    ) -> None:
-        self.repo = repo  # the cloned repo (`Workspace.repo`): publish targets it
-        self.shell_repo_dir = "/workspace/repo"
-        self.backend = None
-        self.base = base
-        self.diff_text = diff
-        self.files = list(files or [])
-        self.base_files = dict(base_files or {})
-        self.hashes = list(hashes or [])
-        self.mismatch = mismatch
-        self.calls: list[str] = []
-
-    def _hash(self) -> str:
-        if self.hashes:
-            return self.hashes.pop(0) if len(self.hashes) > 1 else self.hashes[0]
-        return hashlib.sha256(self.diff_text.encode()).hexdigest()
-
-    async def diff_and_hash(self) -> tuple[str, str]:
-        self.calls.append("diff_and_hash")
-        return self.diff_text, self._hash()
-
-    async def base_sha(self) -> str:
-        self.calls.append("base_sha")
-        return self.base
-
-    async def changed_files(self) -> list[FileChange]:
-        self.calls.append("changed_files")
-        return list(self.files)
-
-    async def files_matching_approval(self, approved_hash: str) -> list[FileChange]:
-        self.calls.append("files_matching_approval")
-        if self._hash() != approved_hash:
-            raise WorkspaceError("The workspace changed since the human approved the diff")
-        if self.mismatch:
-            raise WorkspaceError(f"Files differ from the approved diff: {self.mismatch}")
-        return list(self.files)
-
-    async def read_base_file(self, rel_path: str) -> str | None:
-        self.calls.append(f"read_base:{rel_path}")
-        return self.base_files.get(rel_path)
-
-
-class ScriptedChatModel(GenericFakeChatModel):
-    """GenericFakeChatModel that accepts `bind_tools` (returns itself)."""
-
-    def bind_tools(self, tools: Any, **kwargs: Any) -> "ScriptedChatModel":  # type: ignore[override]
-        return self
-
-
-class RecordingChatModel(ScriptedChatModel):
-    """ScriptedChatModel remembering every message list it was called with (`seen`)."""
-
-    seen: list[list[BaseMessage]] = []
-
-    def _generate(self, messages, *args, **kwargs):  # type: ignore[override]
-        self.seen.append(list(messages))
-        return super()._generate(messages, *args, **kwargs)
-
-
-class FakeWebTool:
-    """A `web_search` tool double recording its calls (the researcher's calls are otherwise
-    invisible from the orchestrator's messages)."""
-
-    def __init__(self, answer: str = "No web results.") -> None:
-        self.calls: list[str] = []
-        self.answer = answer
-        self.tool = StructuredTool.from_function(
-            func=self._search, name="web_search", description="Search the web."
-        )
-
-    def _search(self, query: str) -> str:
-        """Search the web for external/public library knowledge.
-
-        Args:
-            query: What to search for.
-        """
-        self.calls.append(query)
-        return self.answer

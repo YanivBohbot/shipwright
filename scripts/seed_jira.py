@@ -1,64 +1,61 @@
-"""Create the demo tickets (demo/tickets.yaml) in the live Jira project, idempotently.
+"""Create the demo tickets (demo/tickets.yaml) in the Jira project, idempotently.
 
-Run: `uv run python scripts/seed_jira.py` (live mode settings; demo/seeded.json keeps the keys).
-Local mode needs no seeding: LocalJira reads demo/tickets.yaml directly.
+Run: `uv run python scripts/seed_jira.py`. It calls the `jira_create_issue` MCP tool directly
+(the same tool the agent uses). demo/seeded.json keeps the `scenario -> key` mapping, so a
+ticket already created is never created twice.
 """
 
 import asyncio
 import json
+import re
 from pathlib import Path
+from typing import Any
 
-from shipwright.integrations.jira.gateway import JiraGateway
-from shipwright.integrations.jira.local_jira import DemoTicket, load_demo_tickets
+from shipwright.domain.tickets import load_demo_tickets
 
 ROOT = Path(__file__).resolve().parent.parent
 TICKETS_PATH = ROOT / "demo" / "tickets.yaml"
 SEEDED_PATH = ROOT / "demo" / "seeded.json"
 
 
-async def seed_demo_tickets(
-    jira: JiraGateway, project: str, tickets: list[DemoTicket], seeded_path: Path
-) -> dict[int, str]:
-    """Create the missing demo tickets; return the full `scenario -> key` mapping.
+def created_key(result: Any, project: str) -> str:
+    """The new issue key found in the MCP tool's result (JSON text or content blocks)."""
+    text = json.dumps(result) if not isinstance(result, str) else result
+    match = re.search(rf"\b{re.escape(project)}-\d+\b", text)
+    if not match:
+        raise RuntimeError(f"jira_create_issue returned no {project} key: {text[:300]}")
+    return match.group(0)
 
-    Scenarios already in `seeded_path` are not recreated; the file is rewritten after each
-    creation so a mid-run failure never loses created keys.
-    """
-    seeded_path = Path(seeded_path)
+
+async def seed(create_issue: Any, project: str, tickets: list[dict], seeded: Path) -> dict:
     mapping: dict[int, str] = {}
-    if seeded_path.exists():
-        try:
-            raw = json.loads(seeded_path.read_text(encoding="utf-8"))
-            mapping = {int(k): str(v) for k, v in raw.items()}
-        except (ValueError, AttributeError) as exc:
-            raise ValueError(
-                f"Corrupt seed file {seeded_path}: expected a JSON object mapping "
-                "scenario numbers to Jira keys"
-            ) from exc
-    for t in sorted(tickets, key=lambda t: t.scenario):
-        if t.scenario in mapping:
+    if seeded.exists():
+        mapping = {int(k): v for k, v in json.loads(seeded.read_text(encoding="utf-8")).items()}
+    for t in sorted(tickets, key=lambda t: t["scenario"]):
+        if t["scenario"] in mapping:
             continue
-        mapping[t.scenario] = await jira.create_issue(
-            project, t.summary, t.description, t.issue_type
+        result = await create_issue.ainvoke(
+            {
+                "project_key": project,
+                "summary": t["summary"],
+                "issue_type": t["issue_type"],
+                "description": t["description"],
+            }
         )
-        seeded_path.parent.mkdir(parents=True, exist_ok=True)
-        seeded_path.write_text(
-            json.dumps({str(k): v for k, v in sorted(mapping.items())}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    return dict(sorted(mapping.items()))
+        mapping[t["scenario"]] = created_key(result, project)
+        seeded.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")  # after each
+    return mapping
 
 
 async def main() -> None:
     from shipwright.core.config import get_settings
-    from shipwright.integrations.jira.mcp_jira import McpJira
     from shipwright.integrations.mcp import load_mcp_tools
 
     settings = get_settings()
-    jira = McpJira((await load_mcp_tools(settings))["atlassian"])
+    tools = {t.name: t for t in await load_mcp_tools(settings)}
     tickets = load_demo_tickets(TICKETS_PATH)
-    mapping = await seed_demo_tickets(jira, settings.jira_project, tickets, SEEDED_PATH)
-    for scenario, key in mapping.items():
+    mapping = await seed(tools["jira_create_issue"], settings.jira_project, tickets, SEEDED_PATH)
+    for scenario, key in sorted(mapping.items()):
         print(f"scenario {scenario}: {key}")
 
 

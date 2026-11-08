@@ -1,14 +1,14 @@
 """Deep Agents concept: **CompositeBackend** (one filesystem, several stores) + **permissions**.
 
-| path          | backend                                  | lifetime                          |
-|---------------|------------------------------------------|-----------------------------------|
-| `/` (default) | the thread's sandbox (`Workspace.backend`)| the thread (repo clone, `execute`)|
-| `/memories/`  | `StoreBackend`, namespace `("users", id)`| persistent, per user              |
-| `/policies/`  | `StoreBackend`, namespace `("org", id)`  | persistent, shared, read-only     |
-| `/skills/`    | `FilesystemBackend` over `agent/skills/` | packaged with the code, read-only |
+| path          | backend                                     | lifetime                         |
+|---------------|---------------------------------------------|----------------------------------|
+| `/` (default) | the thread's LangSmith sandbox              | the thread (repo clone, `execute`)|
+| `/memories/`  | `StoreBackend`, namespace `("users", id)`   | persistent, per user (MongoDB)   |
+| `/policies/`  | `FilesystemBackend` over `agent/policies/`  | packaged with the code           |
+| `/skills/`    | `FilesystemBackend` over `agent/skills/`    | packaged with the code           |
 
-`PERMISSIONS` make `/policies/` and `/skills/` read-only for the orchestrator;
-`SUBAGENT_PERMISSIONS` additionally keep subagents out of the user's memory.
+`PERMISSIONS` make `/policies/` and `/skills/` read-only; `SUBAGENT_PERMISSIONS` also keep the
+subagents out of the user's memory (only the orchestrator records preferences).
 """
 
 from pathlib import Path
@@ -16,59 +16,36 @@ from typing import Any
 
 from deepagents import FilesystemPermission
 from deepagents.backends import CompositeBackend, FilesystemBackend, StoreBackend
-from deepagents.backends.utils import create_file_data
-from langgraph.store.base import BaseStore
+from deepagents.backends.protocol import BackendProtocol
 
-from shipwright.core.config import Settings
-from shipwright.sandbox.workspace import Workspace
-
-MEMORIES_ROUTE = "/memories/"
-POLICIES_ROUTE = "/policies/"
+AGENT_DIR = Path(__file__).parent
 SKILLS_ROUTE = "/skills/"
-SKILLS_DIR = Path(__file__).parent / "skills"
-POLICIES_FILE = Path(__file__).parent / "policies" / "POLICIES.md"
-# CompositeBackend strips the route prefix: StoreBackend sees "/POLICIES.md".
-POLICIES_STORE_KEY = "/POLICIES.md"
+MEMORY_FILES = ["/memories/preferences.md", "/policies/POLICIES.md"]
 
-_READ_ONLY = [
-    FilesystemPermission(operations=["write"], paths=["/policies/**"], mode="deny"),
-    FilesystemPermission(operations=["write"], paths=["/skills/**"], mode="deny"),
+PERMISSIONS = [
+    FilesystemPermission(operations=["write"], paths=["/policies/**", "/skills/**"], mode="deny"),
 ]
-PERMISSIONS: list[FilesystemPermission] = list(_READ_ONLY)
-SUBAGENT_PERMISSIONS: list[FilesystemPermission] = [
-    *_READ_ONLY,
-    FilesystemPermission(operations=["write"], paths=["/memories/**"], mode="deny"),
+SUBAGENT_PERMISSIONS = [
+    FilesystemPermission(
+        operations=["write"], paths=["/policies/**", "/skills/**", "/memories/**"], mode="deny"
+    ),
 ]
 
 
 def user_namespace(rt: Any) -> tuple[str, ...]:
-    """Store namespace of the per-user memory; refuses to fall back to a shared namespace."""
+    """Per-user memory namespace; refuses to fall back to a shared one."""
     user_id = getattr(getattr(rt, "context", None), "user_id", None)
     if not user_id:
-        raise RuntimeError(
-            "Per-user memory requires context=ShipwrightContext(user_id=...) at invoke time."
-        )
+        raise RuntimeError("Per-user memory needs context=ShipwrightContext(user_id=...).")
     return ("users", user_id)
 
 
-def build_backend(workspace: Workspace, settings: Settings) -> CompositeBackend:
-    org_id = settings.org_id
+def build_backend(sandbox: BackendProtocol) -> CompositeBackend:
     return CompositeBackend(
-        default=workspace.backend,
+        default=sandbox,
         routes={
-            MEMORIES_ROUTE: StoreBackend(namespace=user_namespace),
-            POLICIES_ROUTE: StoreBackend(namespace=lambda rt: ("org", org_id)),
-            SKILLS_ROUTE: FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True),
+            "/memories/": StoreBackend(namespace=user_namespace),
+            "/policies/": FilesystemBackend(root_dir=AGENT_DIR / "policies", virtual_mode=True),
+            SKILLS_ROUTE: FilesystemBackend(root_dir=AGENT_DIR / "skills", virtual_mode=True),
         },
     )
-
-
-async def seed_policies_if_absent(store: BaseStore, settings: Settings) -> bool:
-    """Write POLICIES.md under `("org", org_id)` unless present (never overwrites)."""
-    namespace = ("org", settings.org_id)
-    if await store.aget(namespace, POLICIES_STORE_KEY) is not None:
-        return False
-    data = create_file_data(POLICIES_FILE.read_text(encoding="utf-8"))
-    value = {k: data[k] for k in ("content", "encoding", "created_at", "modified_at")}
-    await store.aput(namespace, POLICIES_STORE_KEY, value)
-    return True

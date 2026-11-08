@@ -1,184 +1,90 @@
-"""Workspace: the target repo cloned in a sandbox, the diff the human reviews, the files to push.
+"""The thread's workspace: a LangSmith sandbox holding a clone of the target repository.
 
-`files_matching_approval` is the publish guard: same diff hash as approved, and every file's
-blob sha equal to the approved patch's `index` line (see `git_diff`).
+Deep Agents concept: a **sandbox backend**. `LangSmithSandbox` gives the agent the file tools
+plus `execute` (shell) inside an isolated machine. One sandbox per thread
+(`shipwright-<thread_id>`), reused while it lives, so a paused run finds its files again.
+
+The clone has no push credentials: publishing goes through the GitHub MCP tools only.
 """
 
-import hashlib
+import asyncio
 import re
-from pathlib import Path
 
+from deepagents.backends import LangSmithSandbox
 from deepagents.backends.protocol import SandboxBackendProtocol
 
-from shipwright.integrations.github.gateway import FileChange
-from shipwright.sandbox import git_diff
-from shipwright.sandbox.shell import (  # noqa: F401  (re-exported for callers)
-    REPO_DIR,
-    STATE_DIR,
-    SandboxShell,
-    WorkspaceError,
-    parse_exit_code,
-    q,
-)
+from shipwright.core.config import Settings
 
-SKILLS_DIR = "/skills"
-BASE_SHA_FILE = f"{STATE_DIR}/base_sha"
-INFO_ATTRIBUTES = f"{REPO_DIR}/.git/info/attributes"
-BOT_NAME = "Shipwright Bot"
-BOT_EMAIL = "shipwright-bot@users.noreply.github.com"
+REPO_DIR = "/workspace/repo"
 CLONE_TIMEOUT = 600
-NO_PUSH_URL = "no-push://publish-through-the-review-gate"
-
-_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-# `--text`: a `-diff` / `binary` attribute can never hide a text change behind "Binary files".
-_DIFF_FLAGS = "--no-color --no-ext-diff --no-textconv --no-renames --binary --full-index --text"
-_RAW_FLAGS = "--raw -z --no-renames --full-index --no-color"
+_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")
 
 
-def validate_repo(repo: str) -> None:
-    if not _REPO_RE.match(repo) or any(part in (".", "..") for part in repo.split("/")):
-        raise WorkspaceError(f"Invalid repo (expected 'owner/name'): {repo!r}")
+class WorkspaceError(RuntimeError):
+    """A command in the sandbox failed."""
 
 
-class Workspace(SandboxShell):
-    """A cloned repo inside a sandbox backend (LangSmith sandbox or local shell)."""
+async def open_sandbox(settings: Settings, thread_id: str) -> LangSmithSandbox:
+    """Reuse the thread's sandbox unless it failed; otherwise create it."""
+    from langsmith.sandbox import SandboxClient
 
-    def __init__(
-        self,
-        backend: SandboxBackendProtocol,
-        repo: str,
-        clone_url: str,
-        *,
-        shell_repo_dir: str = REPO_DIR,
-        posix_shell: bool = True,
-        skills_source: Path | None = None,
-    ) -> None:
-        validate_repo(repo)
-        super().__init__(backend, shell_repo_dir, posix_shell)
-        self.repo, self.clone_url, self.skills_source = repo, clone_url, skills_source
+    if not _THREAD_ID_RE.match(thread_id):
+        raise ValueError(f"Unsafe thread id for a sandbox name: {thread_id!r}")
+    client = SandboxClient(api_key=settings.langsmith_api_key.get_secret_value())
+    name = f"shipwright-{thread_id}"
+    existing = [s for s in await asyncio.to_thread(client.list_sandboxes) if s.name == name]
+    sandbox = next((s for s in existing if getattr(s, "status", "ready") != "failed"), None)
+    if sandbox is None:
+        if existing:
+            await asyncio.to_thread(client.delete_sandbox, name)
+        sandbox = await asyncio.to_thread(
+            client.create_sandbox, name=name, idle_ttl_seconds=settings.sandbox_idle_ttl_seconds
+        )
+    return LangSmithSandbox(sandbox=sandbox)
 
-    async def ensure_cloned(self) -> bool:
-        """Clone once (recording the base sha) and upload the skills. True if cloned now."""
-        cloned = False
-        if await self._download(f"{REPO_DIR}/.git/HEAD") is None:
-            await self._exec(
-                "git clone --depth 50 --config core.autocrlf=false "
-                f"{q(self.clone_url)} {q(self.shell_repo_dir)}",
-                timeout=CLONE_TIMEOUT,
-            )
-            # Publishing goes through the GitHub gateway only. Locally the origin is a file://
-            # bare repo that needs no credentials, so a stray `git push` must fail (accident
-            # guard, not a security boundary).
-            await self._git(f"remote set-url --push origin {q(NO_PUSH_URL)}")
-            await self._git(f"config user.name {q(BOT_NAME)}")
-            await self._git(f"config user.email {q(BOT_EMAIL)}")
-            sha = (await self._git("rev-parse HEAD")).strip().splitlines()[0].strip()
-            if not _SHA_RE.match(sha):
-                raise WorkspaceError(f"Unexpected HEAD sha after clone: {sha!r}")
-            await self._upload([(BASE_SHA_FILE, sha.encode())])
-            cloned = True
-        elif await self._download(BASE_SHA_FILE) is None:
-            raise WorkspaceError(
-                f"Workspace corrupt: repo exists but no {BASE_SHA_FILE}; "
-                "delete the workspace/sandbox and retry."
-            )
-        if (src := self.skills_source) is not None and src.is_dir():
-            files = [p for p in sorted(src.rglob("*")) if p.is_file()]
-            await self._upload(
-                [(f"{SKILLS_DIR}/{p.relative_to(src).as_posix()}", p.read_bytes()) for p in files]
-            )
-        return cloned
 
-    async def base_sha(self) -> str:
-        sha = ((await self._download(BASE_SHA_FILE)) or b"").decode("ascii", "replace").strip()
-        if not _SHA_RE.match(sha):
-            raise WorkspaceError(f"No valid base sha recorded at {BASE_SHA_FILE}")
-        return sha
+async def run(backend: SandboxBackendProtocol, command: str, timeout: int | None = None) -> str:
+    """Run a shell command in the sandbox; raise WorkspaceError on a non-zero exit code."""
+    resp = await backend.aexecute(command, **({"timeout": timeout} if timeout else {}))
+    if resp.exit_code not in (0, None):
+        tail = "\n".join(resp.output.splitlines()[-20:])
+        raise WorkspaceError(f"Command failed (exit {resp.exit_code}): {command}\n{tail}")
+    return resp.output
 
-    async def _publishable_entries(self, sha: str) -> list[git_diff.RawEntry]:
-        """Changed entries vs `sha` (after `add -N .`); refuse unsafe modes and info/attributes."""
-        await self._git("add -N .")
-        raw = await self._capture_git(f"diff {_RAW_FLAGS} {sha}", "raw")
-        try:
-            entries = git_diff.parse_raw_diff(raw)
-        except git_diff.GitDiffError as e:
-            raise WorkspaceError(str(e)) from e
-        if bad := git_diff.unsafe_entries(entries):
-            raise WorkspaceError(
-                "Unpublishable changes (only regular-file edits, additions and deletions can be "
-                "published; revert these): " + ", ".join(bad)
-            )
-        (resp,) = await self.backend.adownload_files([INFO_ATTRIBUTES])
-        if resp.error != "file_not_found" and (resp.error or (resp.content or b"").strip()):
-            raise WorkspaceError(
-                "Unpublishable workspace: .git/info/attributes exists "
-                "(it would change the reviewed diff); delete it"
-            )
-        return entries
 
-    async def patch_and_hash(self) -> tuple[bytes, str]:
-        """Exact `--full-index` patch bytes vs the base sha and their sha256 (one git read)."""
-        sha = await self.base_sha()
-        await self._publishable_entries(sha)
-        patch = await self._capture_git(f"diff {_DIFF_FLAGS} {sha}", "diff.patch")
-        return patch, hashlib.sha256(patch).hexdigest()
+def git(args: str) -> str:
+    return f'git -C "{REPO_DIR}" {args}'
 
-    async def diff_and_hash(self) -> tuple[str, str]:
-        """`(diff text for the human, sha256 of the exact bytes)`; refuses unpublishable sets."""
-        patch, digest = await self.patch_and_hash()
-        return patch.decode("utf-8", errors="replace"), digest
 
-    async def changed_files(self) -> list[FileChange]:
-        """Changed files vs the base sha (deletions have `content=None`), sorted by path."""
-        entries = await self._publishable_entries(await self.base_sha())
-        status = {e.path: e.status for e in entries}
-        present = [p for p in sorted(status) if status[p] != "D"]
-        downloaded = await self._download_many([f"{REPO_DIR}/{p}" for p in present])
-        contents = dict(zip(present, downloaded, strict=True))
-        changes: list[FileChange] = []
-        for path in sorted(status):
-            if status[path] == "D":
-                changes.append(FileChange(path, None))
-                continue
-            if (data := contents[path]) is None:
-                raise WorkspaceError(f"Changed file could not be read: {path}")
-            try:
-                changes.append(FileChange(path, data.decode("utf-8")))
-            except UnicodeDecodeError as e:
-                raise WorkspaceError(f"Changed file is not UTF-8 text: {path}") from e
-        return changes
+async def clone_repo(backend: SandboxBackendProtocol, repo: str) -> None:
+    """Clone `https://github.com/<repo>` into REPO_DIR once (no-op if already cloned)."""
+    if (await backend.aexecute(f'test -d "{REPO_DIR}/.git"')).exit_code == 0:
+        return
+    await run(
+        backend,
+        f'git clone --depth 50 "https://github.com/{repo}.git" "{REPO_DIR}"',
+        timeout=CLONE_TIMEOUT,
+    )
+    await run(backend, git('remote set-url --push origin "no-push://use-the-github-mcp-tools"'))
 
-    async def files_matching_approval(self, approved_hash: str) -> list[FileChange]:
-        """The files to publish, guaranteed to be exactly the diff the human approved.
 
-        Refuses if the diff hash changed since approval, or if any file's blob sha differs from
-        the `index` line of the approved patch (clean filters, assume-unchanged...).
-        """
-        patch, digest = await self.patch_and_hash()
-        if digest != approved_hash:
-            raise WorkspaceError("The workspace changed since the human approved the diff")
-        files = await self.changed_files()
-        if problems := git_diff.verify_files_match_diff(patch, files):
-            raise WorkspaceError("Files differ from the approved diff: " + "; ".join(problems))
-        return files
+async def workspace_diff(backend: SandboxBackendProtocol) -> str:
+    """Unified diff of the working tree against HEAD, new files included."""
+    await run(backend, git("add -N ."))  # make new files visible to `git diff`
+    return await run(backend, git("--no-pager diff --no-color HEAD"))
 
-    async def read_base_file(self, rel_path: str) -> str | None:
-        """UTF-8 content of a file at the BASE commit (never the worktree), None if absent there.
 
-        Publishing reads unchanged files (CHANGELOG.md) from here: a worktree file hidden from
-        the diff (assume-unchanged, clean filter) can never reach the push this way.
-        """
-        parts = rel_path.replace("\\", "/").split("/")
-        bad = any(p in ("", ".", "..") for p in parts) or ":" in rel_path
-        if not rel_path or rel_path.startswith(("/", "\\")) or bad:
-            raise ValueError(f"Invalid repo-relative path: {rel_path!r}")
-        path, sha = "/".join(parts), await self.base_sha()
-        listed = await self._capture_git(f"ls-tree --name-only {sha} -- {q(path)}", "ls-tree")
-        if not listed.strip():
-            return None
-        data = await self._capture_git(f"cat-file blob {q(f'{sha}:{path}')}", "base-file")
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError as e:
-            raise WorkspaceError(f"Base file is not UTF-8 text: {rel_path}") from e
+async def changed_files(backend: SandboxBackendProtocol) -> dict[str, list]:
+    """`{"files": [{"path", "content"}], "deleted": [...]}`: what `push_files` must receive."""
+    await run(backend, git("add -N ."))
+    status = await run(backend, git("--no-pager diff --name-status --no-renames HEAD"))
+    entries = [line.split("\t", 1) for line in status.splitlines() if "\t" in line]
+    deleted = [path for code, path in entries if code.startswith("D")]
+    present = [path for code, path in entries if not code.startswith("D")]
+    downloads = await backend.adownload_files([f"{REPO_DIR}/{p}" for p in present])
+    files = []
+    for path, resp in zip(present, downloads, strict=True):
+        if resp.error or resp.content is None:
+            raise WorkspaceError(f"Cannot read changed file {path}: {resp.error}")
+        files.append({"path": path, "content": resp.content.decode("utf-8")})
+    return {"files": files, "deleted": deleted}

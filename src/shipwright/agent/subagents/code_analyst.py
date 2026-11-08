@@ -1,15 +1,10 @@
-"""Subagent `code_analyst`: read-only explorer of the cloned repository.
-
-Deep Agents concept: a subagent that only uses the **built-in filesystem tools** (`ls`,
-`read_file`, `glob`, `grep`) on the shared backend, with **skills** (`coding-conventions`).
-Skills are not inherited from the orchestrator: each subagent lists its own sources.
-"""
+"""`code_analyst`: read-only explorer of the cloned repo (built-in file tools + skills)."""
 
 from deepagents import SubAgent
 
 from shipwright.agent.backend import SKILLS_ROUTE, SUBAGENT_PERMISSIONS
 from shipwright.agent.middleware import ReadOnlyToolsMiddleware
-from shipwright.agent.prompts.loader import load_prompt
+from shipwright.agent.prompts.code_analyst import CODE_ANALYST_PROMPT
 from shipwright.core.config import Settings
 from shipwright.sandbox.workspace import REPO_DIR
 
@@ -18,14 +13,12 @@ def build_code_analyst(settings: Settings) -> SubAgent:
     return {
         "name": "code_analyst",
         "description": (
-            "Read-only explorer of the cloned repository. Delegate BEFORE any "
-            "implementation to locate the files concerned by the ticket, existing tests "
-            "and conventions, and get a proposed approach. Never writes code or runs "
-            "commands."
+            "Read-only explorer of the repository. Use it before any implementation to find "
+            "the files concerned, the existing tests and conventions, and an approach."
         ),
-        "system_prompt": load_prompt("code_analyst", repo_dir=REPO_DIR),
+        "system_prompt": CODE_ANALYST_PROMPT.format(repo_dir=REPO_DIR),
         "model": settings.model_light,
-        "tools": [],
+        "tools": [],  # no key = inherit ALL orchestrator tools (MCP writes included)
         "middleware": [ReadOnlyToolsMiddleware()],
         "skills": [SKILLS_ROUTE],
         "permissions": SUBAGENT_PERMISSIONS,

@@ -87,8 +87,6 @@ def build_searcher(settings: Settings) -> KnowledgeSearcher | LocalKeywordSearch
         try:
             return KnowledgeSearcher(build_vector_store(settings))
         except NotFoundException:
-            if settings.mode != "local":
-                raise
             print(
                 f"Pinecone index {settings.pinecone_index!r} not found: using local keyword search"
                 " (run scripts/ingest_knowledge.py to create it)."

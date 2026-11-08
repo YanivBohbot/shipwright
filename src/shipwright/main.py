@@ -1,9 +1,9 @@
 """Shipwright CLI: `shipwright run SHIP-1 [--user alice]`, human-in-the-loop in the terminal.
 
 Reading order: this file -> `agent/orchestrator.py` (the `create_deep_agent` call) -> each
-component it imports. A run: open persistence -> build the dependencies of the mode (local demo
-or live services) -> build the agent -> stream it, printing which subagent / tool is running ->
-at every pause, ask the human and resume with `Command(resume=...)` -> repeat until it ends.
+component it imports. A run: load the MCP tools -> open the thread's sandbox (repo cloned) ->
+open MongoDB persistence -> build the agent -> stream it, printing which subagent / tool runs ->
+at every write, ask the human and resume with `Command(resume=...)` -> repeat until it ends.
 """
 
 import argparse
@@ -19,8 +19,6 @@ from dotenv import load_dotenv
 from langchain.agents.middleware import PIIDetectionError
 from langchain_core.messages import AIMessage, ToolMessage
 from pydantic import ValidationError
-
-from shipwright.integrations.mcp import McpConnectionError
 
 PREVIEW = 160
 _THREAD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")  # = the workspace thread-id rule
@@ -92,13 +90,14 @@ class Progress:
 
 
 async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
-    from shipwright.agent.dependencies import build_dependencies
     from shipwright.agent.hitl import build_resume
     from shipwright.agent.orchestrator import build_shipwright_agent
     from shipwright.agent.state import ShipwrightContext
     from shipwright.core.config import get_settings
     from shipwright.core.persistence import open_persistence
     from shipwright.domain.tickets import parse_ticket_key
+    from shipwright.integrations.mcp import load_mcp_tools
+    from shipwright.sandbox.workspace import clone_repo, open_sandbox
 
     settings = get_settings()
     try:
@@ -106,24 +105,27 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
     except ValueError as e:
         raise CliUsageError(str(e)) from e
     thread = thread or f"{key.lower()}-{uuid.uuid4().hex[:8]}"
-    print(f"Shipwright | {key} | mode {settings.mode} | thread {thread} | user {user}")
+    print(f"Shipwright | {key} | repo {settings.shipwright_repo} | thread {thread} | user {user}")
+    mcp_tools = await load_mcp_tools(settings)
+    sandbox = await open_sandbox(settings, thread)
+    await clone_repo(sandbox, settings.shipwright_repo)
     async with open_persistence(settings) as (checkpointer, store):
-        deps = await build_dependencies(
-            settings, thread_id=thread, checkpointer=checkpointer, store=store
+        agent = build_shipwright_agent(
+            settings, mcp_tools=mcp_tools, sandbox=sandbox, checkpointer=checkpointer, store=store
         )
-        agent = build_shipwright_agent(deps)
         config = {"configurable": {"thread_id": thread}}
-        context = ShipwrightContext(user_id=user)
+        stream = {"context": ShipwrightContext(user_id=user), "subgraphs": True}
         state = await agent.aget_state(config)
-        if state.interrupts:  # live mode only: a paused run of this thread in MongoDB
+        if state.interrupts:  # a paused run of this thread (same --thread)
             print("Resuming a paused run.")
             run_input: Any = await asyncio.to_thread(build_resume, state.interrupts)
         else:
             run_input = {"messages": [{"role": "user", "content": f"Process Jira ticket {key}."}]}
         progress = Progress()
-        stream = {"context": context, "stream_mode": ["updates", "tasks"], "subgraphs": True}
         while True:
-            async for namespace, mode, chunk in agent.astream(run_input, config, **stream):
+            async for namespace, mode, chunk in agent.astream(
+                run_input, config, stream_mode=["updates", "tasks"], **stream
+            ):
                 if mode == "tasks" and "input" in chunk:
                     progress.on_task(namespace, chunk)
                 elif mode == "updates":
@@ -131,10 +133,8 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
             state = await agent.aget_state(config)
             if not state.interrupts:
                 break
-            # input() blocks: run it in a worker thread so the event loop keeps running
+            # input() blocks: ask in a worker thread so the event loop keeps running.
             run_input = await asyncio.to_thread(build_resume, state.interrupts)
-    if settings.mode == "local":
-        print(f"\nLocal PRs: {settings.local_prs_dir}\nLocal Jira:\n{deps.jira.summary_text()}")
     print(f"\nDone (thread {thread}).")
 
 
@@ -152,7 +152,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     run = sub.add_parser("run", help="Process one Jira ticket into a reviewed pull request.")
     run.add_argument("ticket", help='Ticket key, e.g. "SHIP-1".')
     run.add_argument("--user", default=default_user, help="User id (per-user memory).")
-    run.add_argument("--thread", help="Thread id; reuse it to resume a paused run (live mode).")
+    run.add_argument("--thread", help="Thread id; reuse it to resume a paused run.")
     return parser.parse_args(argv)
 
 
@@ -161,9 +161,11 @@ def _err(message: str) -> None:
 
 
 def _config_error(e: ValidationError) -> str:
-    if any("openai_api_key" in map(str, err["loc"]) for err in e.errors()):
-        return "OPENAI_API_KEY is missing: set it in .env (the only key local mode needs)."
-    details = "; ".join(str(err.get("msg", "")) for err in e.errors())
+    """`.env` problems by variable name, e.g. `JIRA_URL: must not be empty`."""
+    details = "; ".join(
+        f"{str(err['loc'][0]).upper() if err['loc'] else '?'}: {err.get('msg', '')}"
+        for err in e.errors()
+    )
     return f"invalid configuration (.env): {details}"
 
 
@@ -177,8 +179,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         asyncio.run(run_ticket(args.ticket, args.user, args.thread))
     except PIIDetectionError as e:
         _err(f"run blocked by the PII guard: {e}. Nothing containing it was sent.")
-    except McpConnectionError as e:
-        _err(f"MCP connection failed: {e}")
     except ValidationError as e:
         _err(_config_error(e))
     except CliUsageError as e:

@@ -1,4 +1,4 @@
-"""Pure evaluators, the LLM judge (scripted model), dataset building and run summaries. Offline."""
+"""Pure evaluators, the LLM judge (scripted model), and dataset building. Offline."""
 
 from __future__ import annotations
 
@@ -17,9 +17,7 @@ from evals.evaluators import (
     tests_green,
     trajectory_subagents,
 )
-from evals.run_evals import summarize_run
-from shipwright.integrations.jira.local_jira import load_demo_tickets as _load
-from tests.scenarios import RunOutcome
+from shipwright.domain.tickets import load_demo_tickets as _load
 
 
 def load_demo_tickets():
@@ -261,53 +259,6 @@ def test_upsert_dataset_creates_then_updates_idempotently():
     upsert_dataset(again, "demo-set")
     assert {u["id"] for u in again.updated} == {example_id(1), example_id(2)}
     assert all(c["id"] not in {example_id(1), example_id(2)} for c in again.created)
-
-
-# ------------------------------------------------------------------ run summary
-
-
-def env_with(prs=(), subtasks=(), comments=()):
-    return SimpleNamespace(
-        github=SimpleNamespace(prs=list(prs)),
-        jira=SimpleNamespace(subtasks=list(subtasks), comments=list(comments)),
-        key="SHIP-1",
-    )
-
-
-def gate(report):
-    return {"kind": "review_gate", "test_report": report}
-
-
-def test_summarize_pr_run():
-    outcome = RunOutcome(
-        interrupts=[gate("1 failed, 3 passed"), gate("4 passed in 1s")],
-        subagents_called=["developer", "reviewer"],
-    )
-    summary = summarize_run(env_with(prs=[{"body": "B", "draft": False}]), outcome)
-    assert summary == {
-        "outcome": "pr",
-        "subagents": ["developer", "reviewer"],
-        "tests_passed": True,  # last gate wins
-        "pr_body": "B",
-        "draft": False,
-    }
-
-
-def test_summarize_draft_pr_has_draft_flag_and_failing_tests():
-    outcome = RunOutcome(interrupts=[gate("2 failed, 1 passed")])
-    summary = summarize_run(env_with(prs=[{"body": "B", "draft": True}]), outcome)
-    assert summary["outcome"] == "pr" and summary["draft"] is True
-    assert summary["tests_passed"] is False
-
-
-def test_summarize_questions_subtasks_and_stopped():
-    questions = summarize_run(env_with(comments=[("SHIP-4", "Why?")]), RunOutcome())
-    assert questions["outcome"] == "questions" and questions["pr_body"] is None
-    subtasks = summarize_run(env_with(subtasks=[("SHIP-7", "a", "d")]), RunOutcome())
-    assert subtasks["outcome"] == "subtasks"
-    stopped = summarize_run(env_with(comments=[("SHIP-5", "x")]), RunOutcome(interrupts=[gate("")]))
-    assert stopped["outcome"] == "stopped"
-    assert summarize_run(env_with(), RunOutcome())["outcome"] == "stopped"
 
 
 def test_expected_subagents_follow_the_spec():

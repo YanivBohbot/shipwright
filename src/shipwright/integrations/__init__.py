@@ -1,1 +1,1 @@
-"""External-service gateways (Jira, GitHub) behind interfaces."""
+"""MCP servers (Jira, GitHub) as LangChain tools."""

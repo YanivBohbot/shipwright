@@ -1,84 +1,69 @@
 ---
 name: jira-workflow
-description: When and how Shipwright talks to Jira - clarification comment, post-PR comment with In Review transition, and sub-task split templates, with update_jira_ticket and create_jira_subtasks usage. Use when a ticket is unclear, too big, or a PR was opened.
+description: When and how Shipwright writes to Jira with the mcp-atlassian tools - clarification comment (jira_add_comment), sub-task split (jira_create_issue), post-PR comment and In Review transition (jira_get_transitions + jira_transition_issue). Use before any Jira write.
 ---
 
 # Jira workflow
 
-Audience: the **orchestrator**. All Jira writes go through two tools and each write needs human
-approval. Write in English, without credentials (`/policies/POLICIES.md`).
+Audience: the **orchestrator**. Jira tools come from the mcp-atlassian MCP server:
 
-Tools:
+| tool | kind | use |
+|------|------|-----|
+| `jira_get_issue(issue_key)` | read | the ticket (summary, description, status) |
+| `jira_get_transitions(issue_key)` | read | the transitions available now, with their ids |
+| `jira_add_comment(issue_key, body)` | write | a comment (Markdown is fine) |
+| `jira_transition_issue(issue_key, transition_id)` | write | move the ticket |
+| `jira_create_issue(project_key, summary, issue_type, description, additional_fields)` | write | a sub-task |
 
-- `update_jira_ticket(key, comment, transition_to=None)` - add a comment, optionally move the
-  ticket.
-- `create_jira_subtasks(parent_key, subtasks=[{summary, description}])` - create sub-tasks under
-  a parent ticket.
+Every write is shown to a human first. Write in English, without credentials.
 
-## When to comment
+Comment only in these three situations; otherwise stay silent.
 
-Comment only in these three situations; otherwise stay silent:
+## 1. Clarification (ticket unclear)
 
-1. The ticket is ambiguous or incomplete and you cannot implement it safely (clarification).
-2. A pull request has been published (post-PR comment).
-3. The ticket is too large for one pull request (sub-task split).
-
-In v1 the **only** transition ever used is `In Review`, set together with the post-PR comment.
-Never transition to `In Progress` or anything else. For clarification and split comments leave
-`transition_to` unset.
-
-## 1. Clarification comment (ticket unclear)
-
-Ask 2-4 numbered, specific questions that a product owner can answer in one line each. Ask only
-what blocks the work; do not ask about things you can decide from the repo, ADRs or policies.
-**No code, no pseudo-code, no implementation proposals.** After posting, **STOP**: do not
-research further, do not code, do not open a PR. Wait for the human answer.
+Ask 2-4 numbered questions a product owner can answer in one line each, only about what blocks
+the work. No code, no implementation proposal. Then **STOP**: no research, no code, no PR.
 
 ```
-update_jira_ticket(key="TB-12", comment="""
-Hi, before implementing I need a few clarifications:
+jira_add_comment(issue_key="SHIP-12", body="""Hi, before implementing I need a few clarifications:
 
-1. <Question about expected behaviour, with the options you see if useful.>
+1. <Question about expected behaviour, with the options you see.>
 2. <Question about an edge case or boundary value.>
-3. <Question about scope or compatibility, if needed.>
 
-I will wait for your answers before starting.
-""")
+I will wait for your answers before starting.""")
 ```
 
-## 2. Post-PR comment
+## 2. Sub-task split (too big for one PR)
 
-Post it after the pull request is published, with the PR URL returned by the publish tool and a
-short summary. Set `transition_to="In Review"`.
+When the policy size limit (400 changed diff lines) would be exceeded or the ticket mixes
+independent concerns, propose 2-5 sub-tasks, each one small PR. Create each one, then comment
+the split on the parent and **STOP**.
 
 ```
-update_jira_ticket(key="TB-12", transition_to="In Review", comment="""
+jira_create_issue(
+  project_key="SHIP",
+  summary="<imperative, specific title>",
+  issue_type="Subtask",
+  description="Goal: <one sentence>.\nAcceptance criteria covered: <AC list>.",
+  additional_fields='{"parent": "SHIP-12"}',
+)
+```
+
+If `Subtask` is rejected, the project names the type differently (e.g. `Sub-task`): retry once
+with that name.
+
+## 3. After the pull request is opened
+
+1. `jira_add_comment` with the PR URL returned by `create_pull_request`:
+
+```
 Pull request opened: <PR URL>
 
 Summary: <1-3 sentences on what changed.>
 Acceptance criteria: <n>/<n> covered by tests. Tests: <passed counts>.
 Self-review: <verdict>; open risks: <short list or "none">.
-""")
 ```
 
-## 3. Sub-task split
-
-Use it when the policy size limit (400 changed diff lines) would be exceeded or the ticket mixes
-independent concerns. Do not publish an oversized PR. Propose 2-5 sub-tasks, each independently
-deliverable as one small PR, with a self-contained description and the acceptance criteria it
-covers. Then post a comment explaining the split and **stop**.
-
-```
-create_jira_subtasks(parent_key="TB-12", subtasks=[
-  {"summary": "<imperative, specific title>",
-   "description": "Goal: <one sentence>.\nAcceptance criteria covered: <AC list>.\nNotes: <dependencies, order>."},
-  {"summary": "<second sub-task>", "description": "..."}
-])
-
-update_jira_ticket(key="TB-12", comment="""
-This ticket is too large for one pull request, so I split it into sub-tasks:
-- <sub-task 1 summary>
-- <sub-task 2 summary>
-Please review the split; I will implement them one at a time.
-""")
-```
+2. `jira_get_transitions`, find the transition named "In Review", then
+   `jira_transition_issue(issue_key=..., transition_id=<its id>)`. If there is none, say so in
+   the final summary; never use another transition.
