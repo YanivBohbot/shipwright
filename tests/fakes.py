@@ -73,20 +73,43 @@ class FakeSandbox:
         ]
 
 
+# The servers' real `readOnlyHint` annotations (checked against both live servers).
+READ_ONLY_MCP_TOOLS = frozenset(
+    {
+        "list_branches",
+        "list_commits",
+        "list_pull_requests",
+        "search_code",
+        "jira_get_issue",
+        "jira_search",
+        "jira_get_transitions",
+    }
+)
+
+
 def fake_mcp_tool(name: str, answer: str = "ok", calls: list | None = None) -> BaseTool:
-    """A tool with an MCP tool's name, recording its arguments in `calls`."""
+    """A tool with an MCP tool's name and annotation, recording its arguments in `calls`."""
     recorded = calls if calls is not None else []
 
     async def run(**kwargs: Any) -> str:
         recorded.append((name, kwargs))
         return answer
 
-    return StructuredTool.from_function(
+    tool = StructuredTool.from_function(
         coroutine=run,
         name=name,
         description=f"Fake MCP tool {name}.",
         args_schema={"type": "object", "properties": {}, "additionalProperties": True},
     )
+    tool.metadata = {"readOnlyHint": True if name in READ_ONLY_MCP_TOOLS else None}
+    return tool
+
+
+def fake_mcp(calls: list | None = None) -> dict[str, BaseTool]:
+    """Every allowlisted MCP tool, faked: what `load_mcp_tools` returns."""
+    from shipwright.integrations.mcp import ALLOWED_TOOLS
+
+    return {n: fake_mcp_tool(n, answer=f"{n} done", calls=calls) for n in ALLOWED_TOOLS}
 
 
 class ScriptedChatModel(GenericFakeChatModel):

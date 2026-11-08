@@ -1,24 +1,24 @@
-"""MCP integration: connections and the tool allowlist (no server is started)."""
+"""MCP integration: connections, the allowlist and the approval rule (no server is started)."""
 
 import pytest
 
-from shipwright.agent.hitl import INTERRUPT_ON
 from shipwright.integrations.mcp import (
     ALLOWED_TOOLS,
-    READ_TOOLS,
-    WRITE_TOOLS,
+    interrupt_on_for,
+    is_read_only,
     mcp_connections,
     select_tools,
 )
-from tests.fakes import fake_mcp_tool, make_settings
+from tests.fakes import READ_ONLY_MCP_TOOLS, fake_mcp, fake_mcp_tool, make_settings
 
 
 def test_connections_carry_credentials_to_each_server():
     conns = mcp_connections(make_settings())
-    assert conns["github"]["transport"] == "streamable_http"
-    assert conns["github"]["headers"]["Authorization"] == "Bearer ghp_fake"
-    env = conns["atlassian"]["env"]
-    assert conns["atlassian"]["transport"] == "stdio"
+    github, atlassian = conns["github"], conns["atlassian"]
+    assert github["transport"] == "streamable_http"
+    assert github.get("headers") == {"Authorization": "Bearer ghp_fake"}
+    assert atlassian["transport"] == "stdio"
+    env = atlassian.get("env") or {}
     assert env["JIRA_URL"] == "https://acme.atlassian.net"
     assert env["JIRA_USERNAME"] == "bot@acme.com"
     assert env["JIRA_API_TOKEN"] == "jira-fake"
@@ -27,7 +27,7 @@ def test_connections_carry_credentials_to_each_server():
 
 def test_select_tools_keeps_only_the_allowlist():
     exposed = [fake_mcp_tool(n) for n in (*ALLOWED_TOOLS, "merge_pull_request", "delete_file")]
-    assert [t.name for t in select_tools(exposed)] == list(ALLOWED_TOOLS)
+    assert list(select_tools(exposed)) == list(ALLOWED_TOOLS)
 
 
 def test_select_tools_fails_when_a_tool_is_missing():
@@ -36,7 +36,22 @@ def test_select_tools_fails_when_a_tool_is_missing():
         select_tools(exposed)
 
 
-def test_every_write_tool_needs_human_approval():
-    assert set(INTERRUPT_ON) == set(WRITE_TOOLS)
-    assert set(READ_TOOLS) | set(WRITE_TOOLS) == set(ALLOWED_TOOLS)
-    assert not set(READ_TOOLS) & set(WRITE_TOOLS)
+def test_every_tool_not_declared_read_only_needs_approval():
+    tools = list(fake_mcp().values())
+    approval = interrupt_on_for(tools)
+    assert set(approval) == set(ALLOWED_TOOLS) - READ_ONLY_MCP_TOOLS
+    assert set(approval) == {
+        "create_branch",
+        "push_files",
+        "create_pull_request",
+        "jira_add_comment",
+        "jira_transition_issue",
+        "jira_create_issue",
+    }
+
+
+def test_a_tool_without_annotation_needs_approval():
+    tool = fake_mcp_tool("list_branches")
+    tool.metadata = None  # a server that sends no annotation
+    assert not is_read_only(tool)
+    assert "list_branches" in interrupt_on_for([tool])

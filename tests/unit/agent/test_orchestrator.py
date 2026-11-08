@@ -1,7 +1,9 @@
 """The deep agent end to end with a scripted model and fake MCP tools (no network).
 
-Checks the wiring that matters: the MCP tools reach the orchestrator, every write pauses for a
-human, an approved write runs once, a rejected write never runs and its reason reaches the agent.
+One scripted model plays every agent, in call order: the orchestrator, then the subagent its
+`task` call starts, then the orchestrator again. Checks: each subagent has exactly its own
+tools; a write inside a subagent pauses the WHOLE run; an approved write runs once; a rejected
+write never runs and its reason reaches the subagent.
 """
 
 from langchain_core.messages import AIMessage
@@ -11,17 +13,11 @@ from langgraph.types import Command
 
 from shipwright.agent.orchestrator import build_shipwright_agent
 from shipwright.agent.state import ShipwrightContext
-from shipwright.integrations.mcp import ALLOWED_TOOLS, WRITE_TOOLS
-from tests.fakes import (
-    FakeSandbox,
-    MemoryAuditSink,
-    ScriptedChatModel,
-    fake_mcp_tool,
-    make_settings,
-)
+from tests.fakes import FakeSandbox, ScriptedChatModel, fake_mcp, make_settings
 
 CONFIG = {"configurable": {"thread_id": "t1"}}
 CONTEXT = ShipwrightContext(user_id="alice")
+START = {"messages": [{"role": "user", "content": "Process Jira ticket SHIP-4."}]}
 COMMENT = {"issue_key": "SHIP-4", "body": "1. Which format?"}
 
 
@@ -29,18 +25,28 @@ def call(name, args, i):
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": f"c{i}"}])
 
 
-def build(script, calls, audit=None):
-    tools = [fake_mcp_tool(n, answer=f"{n} done", calls=calls) for n in ALLOWED_TOOLS]
-    agent = build_shipwright_agent(
+def delegate(subagent, i):
+    return call("task", {"subagent_type": subagent, "description": "do it"}, i)
+
+
+SEEN: list[str] = []  # the text of every message list the model was called with
+
+
+class Recording(ScriptedChatModel):
+    def _generate(self, messages, *args, **kwargs):
+        SEEN.append(" ".join(str(m.content) for m in messages))
+        return super()._generate(messages, *args, **kwargs)
+
+
+def build(script, calls):
+    return build_shipwright_agent(
         make_settings(),
-        mcp_tools=tools,
+        mcp=fake_mcp(calls),
         sandbox=FakeSandbox(),
-        model=ScriptedChatModel(messages=iter(script)),
-        audit_sink=audit or MemoryAuditSink(),
+        model=Recording(messages=iter(script)),
         checkpointer=InMemorySaver(),
         store=InMemoryStore(),
     )
-    return agent
 
 
 async def run(agent, payload):
@@ -48,63 +54,84 @@ async def run(agent, payload):
     return await agent.aget_state(CONFIG)
 
 
-START = {"messages": [{"role": "user", "content": "Process Jira ticket SHIP-4."}]}
-
-
-async def test_read_runs_and_write_pauses_for_the_human():
+async def test_a_write_in_a_subagent_pauses_the_run_and_runs_once_approved():
     calls = []
     script = [
-        call("jira_get_issue", {"issue_key": "SHIP-4"}, 1),
-        call("jira_add_comment", COMMENT, 2),
+        call("jira_get_issue", {"issue_key": "SHIP-4"}, 1),  # orchestrator
+        delegate("jira_agent", 2),
+        call("jira_add_comment", COMMENT, 3),  # jira_agent
+        AIMessage(content="Comment posted."),
+        AIMessage(content="Questions asked; stopping."),  # orchestrator
     ]
     agent = build(script, calls)
     state = await run(agent, START)
-    assert calls == [("jira_get_issue", {"issue_key": "SHIP-4"})]  # the write did not run
+    assert calls == [("jira_get_issue", {"issue_key": "SHIP-4"})]  # the write waits
     (pending,) = state.interrupts
     (action,) = pending.value["action_requests"]
     assert (action["name"], action["args"]) == ("jira_add_comment", COMMENT)
 
-
-async def test_approved_write_runs_once_and_is_audited():
-    calls, audit = [], MemoryAuditSink()
-    script = [call("jira_add_comment", COMMENT, 1), AIMessage(content="Questions posted.")]
-    agent = build(script, calls, audit)
-    await run(agent, START)
     state = await run(agent, Command(resume={"decisions": [{"type": "approve"}]}))
     assert not state.interrupts
-    assert calls == [("jira_add_comment", COMMENT)]
-    assert [(e.tool, e.outcome, e.user_id) for e in audit.events] == [
-        ("jira_add_comment", "ok", "alice")
-    ]
+    assert calls[1:] == [("jira_add_comment", COMMENT)]
+    assert state.values["messages"][-1].content == "Questions asked; stopping."
 
 
-async def test_rejected_write_never_runs_and_the_reason_reaches_the_agent():
+async def test_a_rejected_write_never_runs_and_the_reason_reaches_the_subagent():
     calls = []
-    script = [call("push_files", {"branch": "shipwright/ship-4"}, 1), AIMessage(content="ok")]
+    SEEN.clear()
+    push = {"owner": "acme", "repo": "taskboard-api", "branch": "shipwright/ship-4"}
+    script = [
+        delegate("github_publisher", 1),
+        call("push_files", push, 2),  # github_publisher
+        AIMessage(content="REJECTED: Add a regression test first."),
+        AIMessage(content="Sending the feedback to the developer."),  # orchestrator
+    ]
     agent = build(script, calls)
     await run(agent, START)
     reject = {"decisions": [{"type": "reject", "message": "Add a regression test first."}]}
     state = await run(agent, Command(resume=reject))
     assert calls == []
-    tool_messages = [m for m in state.values["messages"] if m.type == "tool"]
-    assert "Add a regression test first." in tool_messages[-1].content
+    assert any("Add a regression test first." in seen for seen in SEEN)
+    task_result = [m for m in state.values["messages"] if m.type == "tool"][-1]
+    assert task_result.content.startswith("REJECTED")
 
 
-def test_wiring_of_create_deep_agent(monkeypatch):
-    """Only the orchestrator holds the MCP tools; every subagent lists its own tools."""
+def test_each_subagent_has_its_own_tools(monkeypatch):
     import shipwright.agent.orchestrator as orchestrator
 
     captured = {}
     monkeypatch.setattr(orchestrator, "create_deep_agent", lambda **kw: captured.update(kw))
     build([], [])
-    names = [getattr(t, "name", None) for t in captured["tools"]]
-    assert names == [*ALLOWED_TOOLS, "show_workspace_diff", "get_changed_files"]
-    subagents = {s["name"]: s for s in captured["subagents"]}
-    expected = {"general-purpose", "researcher", "code_analyst", "developer", "reviewer"}
-    assert set(subagents) == expected
-    for spec in subagents.values():
-        assert "tools" in spec, f"{spec['name']} would inherit every orchestrator tool"
-        assert not {t.name for t in spec["tools"]} & set(ALLOWED_TOOLS)
-    assert [t.name for t in subagents["researcher"]["tools"]] == ["knowledge_search", "web_search"]
-    assert [t.name for t in subagents["reviewer"]["tools"]] == ["show_workspace_diff"]
-    assert set(captured["interrupt_on"]) == set(WRITE_TOOLS)
+    assert [t.name for t in captured["tools"]] == ["jira_get_issue"]
+    tools = {s["name"]: [t.name for t in s["tools"]] for s in captured["subagents"]}
+    assert tools == {
+        "general-purpose": [],
+        "researcher": ["knowledge_search", "web_search", "jira_get_issue", "jira_search"],
+        "code_analyst": ["list_commits", "list_pull_requests", "search_code"],
+        "developer": [],
+        "reviewer": ["show_workspace_diff"],
+        "github_publisher": [
+            "get_changed_files",
+            "list_branches",
+            "create_branch",
+            "push_files",
+            "create_pull_request",
+        ],
+        "jira_agent": [
+            "jira_get_issue",
+            "jira_get_transitions",
+            "jira_add_comment",
+            "jira_transition_issue",
+            "jira_create_issue",
+        ],
+    }
+    # One approval rule for everyone: subagents do not override the inherited interrupt_on.
+    assert all("interrupt_on" not in s for s in captured["subagents"])
+    assert set(captured["interrupt_on"]) == {
+        "create_branch",
+        "push_files",
+        "create_pull_request",
+        "jira_add_comment",
+        "jira_transition_issue",
+        "jira_create_issue",
+    }

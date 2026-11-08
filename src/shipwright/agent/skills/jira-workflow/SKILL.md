@@ -5,7 +5,9 @@ description: When and how Shipwright writes to Jira with the mcp-atlassian tools
 
 # Jira workflow
 
-Audience: the **orchestrator**. Jira tools come from the mcp-atlassian MCP server:
+Audience: the **orchestrator** (when to write, and the text) and the **jira_agent** (which
+holds the Jira write tools and makes the writes). Jira tools come from the mcp-atlassian MCP
+server; the authorization layer refuses any issue outside the configured project:
 
 | tool | kind | use |
 |------|------|-----|

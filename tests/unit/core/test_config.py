@@ -37,3 +37,15 @@ def test_sandbox_provider_defaults_to_local_and_langsmith_needs_a_key():
     assert make_settings(langsmith_api_key=None).langsmith_api_key is None
     with pytest.raises(ValidationError, match="LANGSMITH_API_KEY"):
         make_settings(sandbox_provider="langsmith", langsmith_api_key=None)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "acme/taskboard-api",
+        "https://github.com/acme/taskboard-api",
+        "https://github.com/acme/taskboard-api.git/",
+    ],
+)
+def test_repo_accepts_a_github_url(value):
+    assert make_settings(shipwright_repo=value).shipwright_repo == "acme/taskboard-api"

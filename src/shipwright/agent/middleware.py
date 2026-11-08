@@ -4,15 +4,15 @@ Prebuilt LangChain middleware:
 - `TodoListMiddleware`: the `write_todos` planning tool (not in deepagents' default stack).
 - `PIIMiddleware`: redact emails; BLOCK GitHub tokens (raises `PIIDetectionError`).
 - `ModelCallLimitMiddleware`, `ModelRetryMiddleware`, `ModelFallbackMiddleware`.
-- `ToolRetryMiddleware` on read-only MCP tools only (retrying a write could duplicate a PR).
+- `ToolRetryMiddleware` on the orchestrator's read tool (retrying a write could duplicate it).
 Custom middleware:
-- `AuditMiddleware` (`awrap_tool_call`): one MongoDB `audit_log` event per write tool call.
-- `ReadOnlyToolsMiddleware`: hides and refuses the write tools of the read-only subagents.
+- `ReadOnlyToolsMiddleware`: hides and refuses the built-in write tools (`write_file`,
+  `execute`...) in every subagent except the developer.
+The audit of MCP writes is an MCP interceptor (`integrations/authorization.py`), so it sees the
+calls of every subagent.
 """
 
-import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -28,11 +28,7 @@ from langchain.agents.middleware import (
 )
 from langchain_core.messages import ToolMessage
 
-from shipwright.audit import AuditEvent, AuditSink, redact_secrets
 from shipwright.core.config import Settings
-from shipwright.integrations.mcp import READ_TOOLS, WRITE_TOOLS
-
-logger = logging.getLogger(__name__)
 
 # Classic `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` tokens plus fine-grained `github_pat_` tokens.
 GITHUB_TOKEN_PATTERN = r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"
@@ -45,9 +41,7 @@ def is_transient_error(exc: BaseException) -> bool:
     return isinstance(exc, _TRANSIENT)
 
 
-def build_middleware(
-    settings: Settings, audit_sink: AuditSink
-) -> list[AgentMiddleware[Any, Any, Any]]:
+def build_middleware(settings: Settings) -> list[AgentMiddleware[Any, Any, Any]]:
     """The orchestrator's middleware, in order (deepagents adds its own around it)."""
     retry = {"max_retries": 2, "retry_on": is_transient_error, "backoff_factor": 2.0}
     return [
@@ -58,40 +52,9 @@ def build_middleware(
         ),
         ModelCallLimitMiddleware(run_limit=settings.orchestrator_model_call_limit),
         ModelRetryMiddleware(on_failure="error", **retry),
-        ToolRetryMiddleware(tools=list(READ_TOOLS), on_failure="continue", **retry),
+        ToolRetryMiddleware(tools=["jira_get_issue"], on_failure="continue", **retry),
         ModelFallbackMiddleware(settings.model_light),
-        AuditMiddleware(audit_sink),
     ]
-
-
-class AuditMiddleware(AgentMiddleware):
-    """Record every write tool call (after the human approved it); never fails the call."""
-
-    def __init__(self, sink: AuditSink) -> None:
-        super().__init__()
-        self.sink = sink
-
-    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
-        call = request.tool_call
-        if call["name"] not in WRITE_TOOLS:
-            return await handler(request)
-        result = await handler(request)
-        status = getattr(result, "status", "success")
-        config = getattr(request.runtime, "config", None) or {}
-        event = AuditEvent(
-            ts=datetime.now(UTC),
-            thread_id=str((config.get("configurable") or {}).get("thread_id", "unknown")),
-            user_id=str(getattr(request.runtime.context, "user_id", "unknown")),
-            tool=call["name"],
-            args=redact_secrets(dict(call.get("args") or {})),
-            outcome="error" if status == "error" else "ok",
-            result_preview=str(redact_secrets(str(getattr(result, "content", result))))[:500],
-        )
-        try:
-            await self.sink.record(event)
-        except Exception:
-            logger.warning("audit sink failed to record %s", event.tool, exc_info=True)
-        return result
 
 
 def _tool_name(tool: Any) -> str | None:

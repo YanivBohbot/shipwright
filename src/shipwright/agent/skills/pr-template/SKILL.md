@@ -5,10 +5,12 @@ description: How Shipwright publishes with the GitHub MCP tools (get_changed_fil
 
 # Publishing a pull request
 
-Audience: the **orchestrator**. Each GitHub write is shown to a human first; what they approve
-is exactly what is sent, so the PR text must match the diff.
+Audience: the **orchestrator** writes the title and body below; the **github_publisher**
+follows the steps. Each GitHub write is shown to a human first; what they approve is exactly
+what is sent, so the PR text must match the diff. The authorization layer refuses any other
+repository, any branch not named `shipwright/*`, and any PR whose base is not `main`.
 
-## Steps
+## Steps (github_publisher)
 
 1. `get_changed_files()` returns `{"files": [{"path", "content"}], "deleted": [...]}`.
 2. `list_branches(owner, repo)`: the branch is `shipwright/<key lowercase>` (for example

@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     @field_validator("shipwright_repo")
     @classmethod
     def _validate_repo(cls, v: str) -> str:
+        """`owner/name`; a GitHub URL (`https://github.com/owner/name[.git]`) is accepted too."""
+        v = re.sub(r"^https?://github\.com/", "", v).strip("/").removesuffix(".git")
         if not _REPO_RE.match(v):
             raise ValueError("must have the format 'owner/name'")
         return v

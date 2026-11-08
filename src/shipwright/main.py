@@ -95,6 +95,7 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
     from shipwright.agent.hitl import build_resume
     from shipwright.agent.orchestrator import build_shipwright_agent
     from shipwright.agent.state import ShipwrightContext
+    from shipwright.audit import build_audit_sink
     from shipwright.core.config import get_settings
     from shipwright.core.persistence import open_persistence
     from shipwright.domain.tickets import parse_ticket_key
@@ -108,12 +109,12 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
         raise CliUsageError(str(e)) from e
     thread = thread or f"{key.lower()}-{uuid.uuid4().hex[:8]}"
     print(f"Shipwright | {key} | repo {settings.shipwright_repo} | thread {thread} | user {user}")
-    mcp_tools = await load_mcp_tools(settings)
+    mcp = await load_mcp_tools(settings, build_audit_sink(settings))
     sandbox = await open_sandbox(settings, thread)
     await clone_repo(sandbox, settings.shipwright_repo)
     async with open_persistence(settings) as (checkpointer, store):
         agent = build_shipwright_agent(
-            settings, mcp_tools=mcp_tools, sandbox=sandbox, checkpointer=checkpointer, store=store
+            settings, mcp=mcp, sandbox=sandbox, checkpointer=checkpointer, store=store
         )
         config: RunnableConfig = {"configurable": {"thread_id": thread}}
         context = ShipwrightContext(user_id=user)

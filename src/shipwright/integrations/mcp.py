@@ -1,9 +1,13 @@
 """MCP servers -> LangChain tools, with `MultiServerMCPClient`.
 
-The agent receives the servers' own tools (no wrapper). Least privilege is an allowlist by
-tool name: only the operations Shipwright needs are kept, everything else the servers expose
-(merge, delete, Confluence...) never reaches the model. Every write tool is listed in
-`WRITE_TOOLS`, which `agent/hitl.py` turns into `interrupt_on` (human approval).
+The agents receive the servers' own tools (no wrapper), in three layers:
+1. **Allowlist** (`ALLOWED_TOOLS`): only the operations Shipwright needs are loaded; merge,
+   delete, Confluence... never reach a model. Each subagent then gets its own subset.
+2. **Human approval** (`interrupt_on_for`): every tool the server does not mark
+   `readOnlyHint: true` pauses for a human before it runs (fail-safe: no annotation = approval).
+3. **Authorization interceptors** (`integrations/authorization.py`): every call, including
+   arguments a human edited at approval time, must stay inside the configured repo, the
+   `shipwright/*` branches and the Jira project; every write is audited.
 
 Tool names verified against github/github-mcp-server (remote) and mcp-atlassian 0.23.1.
 """
@@ -12,23 +16,36 @@ import shutil
 import sys
 from pathlib import Path
 
+from langchain.agents.middleware import InterruptOnConfig
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import Connection
 
+from shipwright.audit import AuditSink
 from shipwright.core.config import Settings
+from shipwright.integrations.authorization import audit_interceptor, authorize_interceptor
 
-GITHUB_READ_TOOLS = ("list_branches",)
-GITHUB_WRITE_TOOLS = ("create_branch", "push_files", "create_pull_request")
-JIRA_READ_TOOLS = ("jira_get_issue", "jira_get_transitions")
-JIRA_WRITE_TOOLS = ("jira_add_comment", "jira_transition_issue", "jira_create_issue")
-
-ALLOWED_TOOLS = GITHUB_READ_TOOLS + GITHUB_WRITE_TOOLS + JIRA_READ_TOOLS + JIRA_WRITE_TOOLS
-WRITE_TOOLS = GITHUB_WRITE_TOOLS + JIRA_WRITE_TOOLS
-READ_TOOLS = GITHUB_READ_TOOLS + JIRA_READ_TOOLS
-
+GITHUB_TOOLS = (
+    "list_branches",
+    "list_commits",
+    "list_pull_requests",
+    "search_code",
+    "create_branch",
+    "push_files",
+    "create_pull_request",
+)
+JIRA_TOOLS = (
+    "jira_get_issue",
+    "jira_search",
+    "jira_get_transitions",
+    "jira_add_comment",
+    "jira_transition_issue",
+    "jira_create_issue",
+)
+ALLOWED_TOOLS = GITHUB_TOOLS + JIRA_TOOLS
 # mcp-atlassian groups its tools in toolsets: start only the three Shipwright uses.
 JIRA_TOOLSETS = "jira_issues,jira_comments,jira_transitions"
+APPROVAL = InterruptOnConfig(allowed_decisions=["approve", "edit", "reject"])
 
 
 def _mcp_atlassian_command() -> str:
@@ -62,23 +79,42 @@ def mcp_connections(settings: Settings) -> dict[str, Connection]:
     }
 
 
-def select_tools(tools: list[BaseTool], allowed: tuple[str, ...] = ALLOWED_TOOLS) -> list[BaseTool]:
-    """Keep the allowlisted tools, in allowlist order; fail loudly if one is missing."""
+def is_read_only(tool: BaseTool) -> bool:
+    """The server's own MCP annotation (`readOnlyHint`), kept by the adapter in `metadata`."""
+    return (tool.metadata or {}).get("readOnlyHint") is True
+
+
+def interrupt_on_for(tools: list[BaseTool]) -> dict[str, bool | InterruptOnConfig]:
+    """`interrupt_on`: a human approves every tool that is not declared read-only."""
+    return {t.name: APPROVAL for t in tools if not is_read_only(t)}
+
+
+def select_tools(tools: list[BaseTool]) -> dict[str, BaseTool]:
+    """`{name: tool}` for the allowlisted tools; fail loudly if one is missing."""
     by_name = {t.name: t for t in tools}
-    missing = [name for name in allowed if name not in by_name]
+    missing = [name for name in ALLOWED_TOOLS if name not in by_name]
     if missing:
         raise RuntimeError(
-            f"MCP servers do not expose: {', '.join(missing)}. Check the credentials in .env "
-            "(mcp-atlassian hides the Jira tools when JIRA_URL/USERNAME/API_TOKEN are missing)."
+            f"MCP servers do not expose: {', '.join(missing)}. Check the credentials in .env."
         )
-    return [by_name[name] for name in allowed]
+    return {name: by_name[name] for name in ALLOWED_TOOLS}
 
 
-async def load_mcp_tools(settings: Settings) -> list[BaseTool]:
-    """Connect to both servers and return the allowlisted tools.
+async def load_mcp_tools(settings: Settings, audit_sink: AuditSink) -> dict[str, BaseTool]:
+    """Connect to both servers and return the allowlisted tools by name.
 
-    An MCP tool error comes back to the model as an error ToolMessage (the adapter's
-    default `handle_tool_errors=True`), so the agent can read it and react.
+    An MCP tool error (or an authorization refusal) comes back to the model as an error
+    ToolMessage (the adapter's default `handle_tool_errors=True`), so the agent can react.
     """
-    client = MultiServerMCPClient(mcp_connections(settings))
-    return select_tools(await client.get_tools())
+    write_tools: set[str] = set()  # filled below, once the annotations are known
+    client = MultiServerMCPClient(
+        mcp_connections(settings),
+        # Outermost first: the audit also records the writes the authorization refuses.
+        tool_interceptors=[
+            audit_interceptor(audit_sink, write_tools),
+            authorize_interceptor(settings),
+        ],
+    )
+    tools = select_tools(await client.get_tools())
+    write_tools.update(name for name, tool in tools.items() if not is_read_only(tool))
+    return tools

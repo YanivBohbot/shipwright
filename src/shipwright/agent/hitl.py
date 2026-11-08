@@ -1,9 +1,10 @@
-"""Deep Agents concept: **human-in-the-loop** with `interrupt_on`.
+"""Deep Agents concept: **human-in-the-loop** with `interrupt_on`, answered in the terminal.
 
-Every MCP write tool pauses BEFORE it runs (`HumanInTheLoopMiddleware`, added by
-`create_deep_agent`). The paused run carries one interrupt whose value is
-`{"action_requests": [{"name", "args", ...}], "review_configs": [...]}`; the run resumes with
-`Command(resume={"decisions": [...]})`, one decision per action, in order:
+`interrupt_on` (built by `integrations/mcp.interrupt_on_for`) makes every MCP tool not marked
+read-only pause BEFORE it runs, in whichever agent calls it: the subagents inherit the
+top-level `interrupt_on`, and a subagent's pause pauses the whole run. The paused run carries
+one interrupt whose value is `{"action_requests": [{"name", "args", ...}], "review_configs":
+[...]}`; the run resumes with `Command(resume={"decisions": [...]})`, one decision per action:
 `{"type": "approve"}`, `{"type": "edit", "edited_action": {"name", "args"}}` or
 `{"type": "reject", "message": "..."}` (the message goes back to the agent).
 
@@ -14,14 +15,7 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from langchain.agents.middleware import InterruptOnConfig
 from langgraph.types import Command
-
-from shipwright.integrations.mcp import WRITE_TOOLS
-
-INTERRUPT_ON: dict[str, bool | InterruptOnConfig] = {
-    name: InterruptOnConfig(allowed_decisions=["approve", "edit", "reject"]) for name in WRITE_TOOLS
-}
 
 
 def ask_decisions(interrupt_value: dict[str, Any], ask: Callable[[str], str] = input) -> dict:

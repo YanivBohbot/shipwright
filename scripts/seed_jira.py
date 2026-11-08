@@ -1,8 +1,8 @@
 """Create the demo tickets (demo/tickets.yaml) in the Jira project, idempotently.
 
-Run: `uv run python scripts/seed_jira.py`. It calls the `jira_create_issue` MCP tool directly
-(the same tool the agent uses). demo/seeded.json keeps the `scenario -> key` mapping, so a
-ticket already created is never created twice.
+Run: `uv run python scripts/seed_jira.py`. It calls the `jira_create_issue` MCP tool directly:
+the same tool, authorization and audit as the agent, but no human approval (a setup script).
+demo/seeded.json keeps the `scenario -> key` mapping, so a ticket is never created twice.
 """
 
 import asyncio
@@ -48,11 +48,12 @@ async def seed(create_issue: Any, project: str, tickets: list[dict], seeded: Pat
 
 
 async def main() -> None:
+    from shipwright.audit import build_audit_sink
     from shipwright.core.config import get_settings
     from shipwright.integrations.mcp import load_mcp_tools
 
     settings = get_settings()
-    tools = {t.name: t for t in await load_mcp_tools(settings)}
+    tools = await load_mcp_tools(settings, build_audit_sink(settings))
     tickets = load_demo_tickets(TICKETS_PATH)
     mapping = await seed(tools["jira_create_issue"], settings.jira_project, tickets, SEEDED_PATH)
     for scenario, key in sorted(mapping.items()):

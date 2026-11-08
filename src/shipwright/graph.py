@@ -11,13 +11,14 @@ from deepagents.backends import StateBackend
 from deepagents.backends.protocol import SandboxBackendProtocol
 from langchain_core.runnables import RunnableConfig
 
-from shipwright.agent.orchestrator import ShipwrightGraph, build_shipwright_agent
+from shipwright.agent.orchestrator import build_shipwright_agent
+from shipwright.audit import build_audit_sink
 from shipwright.core.config import get_settings
 from shipwright.integrations.mcp import load_mcp_tools
 from shipwright.sandbox.workspace import clone_repo, open_sandbox
 
 
-async def make_graph(config: RunnableConfig) -> ShipwrightGraph:
+async def make_graph(config: RunnableConfig):
     settings = get_settings()
     configurable = config.get("configurable") or {}
     thread_id = configurable.get("thread_id")
@@ -27,5 +28,5 @@ async def make_graph(config: RunnableConfig) -> ShipwrightGraph:
     else:
         # Schema reads only: nothing executes, so a backend without `execute` is enough.
         sandbox = cast(SandboxBackendProtocol, StateBackend())
-    mcp_tools = await load_mcp_tools(settings)
-    return build_shipwright_agent(settings, mcp_tools=mcp_tools, sandbox=sandbox)
+    mcp = await load_mcp_tools(settings, build_audit_sink(settings))
+    return build_shipwright_agent(settings, mcp=mcp, sandbox=sandbox)
