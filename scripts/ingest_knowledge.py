@@ -19,6 +19,8 @@ KNOWLEDGE_DIR = ROOT / "knowledge"
 
 
 def ensure_index(settings: Settings) -> None:
+    if settings.pinecone_api_key is None:
+        raise SystemExit("PINECONE_API_KEY is required to create and fill the index.")
     pc = Pinecone(api_key=settings.pinecone_api_key.get_secret_value())
     if pc.has_index(settings.pinecone_index):
         return
