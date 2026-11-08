@@ -54,7 +54,8 @@ def build_middleware(settings: Settings) -> list[AgentMiddleware[Any, Any, Any]]
         ModelRetryMiddleware(on_failure="error", **retry),
         ToolRetryMiddleware(tools=["jira_get_issue"], on_failure="continue", **retry),
         ModelFallbackMiddleware(settings.model_light),
-        ReadOnlyToolsMiddleware(blocked={"execute"}),  # the orchestrator never runs commands
+        # The orchestrator never runs commands and writes only its user's memory.
+        ReadOnlyToolsMiddleware(writes_only_under="/memories/"),
     ]
 
 
@@ -64,29 +65,47 @@ def _tool_name(tool: Any) -> str | None:
     return getattr(tool, "name", None)
 
 
+FILE_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
+
+
 class ReadOnlyToolsMiddleware(AgentMiddleware):
     """Remove built-in tools from the model and refuse them if called anyway.
 
-    Default: `write_file`/`edit_file`/`delete`/`execute` (read-only subagents). The orchestrator
-    uses `blocked={"execute"}`: it keeps the file writes for `/memories/` (its permissions deny
-    `/workspace/**`), but never runs commands; only the developer does.
+    Default: `write_file`/`edit_file`/`delete`/`execute` are removed (read-only subagents).
+    With `writes_only_under="/memories/"` (the orchestrator), `write_file`/`edit_file` stay
+    available but are refused outside that prefix: the orchestrator records preferences, never
+    touches the code, and never runs commands. Only the developer does.
     """
 
-    def __init__(self, blocked: frozenset[str] | set[str] = BUILTIN_WRITE_TOOLS) -> None:
+    def __init__(
+        self,
+        blocked: frozenset[str] | set[str] = BUILTIN_WRITE_TOOLS,
+        writes_only_under: str | None = None,
+    ) -> None:
         super().__init__()
         self.blocked = frozenset(blocked)
+        self.writes_only_under = writes_only_under
+
+    def _hidden(self, name: str | None) -> bool:
+        return name in self.blocked and not (self.writes_only_under and name in FILE_WRITE_TOOLS)
 
     async def awrap_model_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
-        kept = [t for t in request.tools if _tool_name(t) not in self.blocked]
+        kept = [t for t in request.tools if not self._hidden(_tool_name(t))]
         return await handler(request.override(tools=kept))
 
     async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
-        name = request.tool_call["name"]
+        call = request.tool_call
+        name = call["name"]
         if name not in self.blocked:
             return await handler(request)
+        path = str((call.get("args") or {}).get("file_path", ""))
+        prefix = self.writes_only_under
+        if not self._hidden(name) and prefix is not None and path.startswith(prefix):
+            return await handler(request)
+        where = f" outside {self.writes_only_under}" if not self._hidden(name) else ""
         return ToolMessage(
-            content=f"Error: tool '{name}' is not available to this agent.",
-            tool_call_id=request.tool_call["id"],
+            content=f"Error: tool '{name}' is not available to this agent{where}.",
+            tool_call_id=call["id"],
             name=name,
             status="error",
         )

@@ -22,11 +22,11 @@ AGENT_DIR = Path(__file__).parent
 SKILLS_ROUTE = "/skills/"
 MEMORY_FILES = ["/memories/preferences.md", "/policies/POLICIES.md"]
 
-# The orchestrator: the code (`/workspace/**`) is the developer's only; it may write `/memories/`.
+# Permissions can only target the routed stores, not the sandbox itself (deepagents refuses
+# permissions on a backend with `execute`). Keeping the orchestrator out of the code is done by
+# `ReadOnlyToolsMiddleware(writes_only_under="/memories/")` in `middleware.py`.
 PERMISSIONS = [
-    FilesystemPermission(
-        operations=["write"], paths=["/policies/**", "/skills/**", "/workspace/**"], mode="deny"
-    ),
+    FilesystemPermission(operations=["write"], paths=["/policies/**", "/skills/**"], mode="deny"),
 ]
 SUBAGENT_PERMISSIONS = [
     FilesystemPermission(
