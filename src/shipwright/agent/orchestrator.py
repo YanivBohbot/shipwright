@@ -43,6 +43,10 @@ from shipwright.core.config import Settings
 from shipwright.knowledge.search import build_searcher
 from shipwright.sandbox.workspace import REPO_DIR, shell_repo_dir
 
+# The graph `create_deep_agent` returns. Its context type parameter is the `context_schema`
+# (a bare `CompiledStateGraph` means context `None`, hence the explicit alias).
+ShipwrightGraph = CompiledStateGraph[Any, ShipwrightContext | None, Any, Any]
+
 
 def build_shipwright_agent(
     settings: Settings,
@@ -53,8 +57,10 @@ def build_shipwright_agent(
     audit_sink: AuditSink | None = None,
     checkpointer: Any = None,
     store: Any = None,
-) -> CompiledStateGraph:
+) -> ShipwrightGraph:
+
     show_diff, get_changed_files = build_workspace_tools(sandbox)
+
     prompt = ORCHESTRATOR_PROMPT.format(
         jira_project=settings.jira_project,
         jira_url=settings.jira_base_url,
@@ -65,6 +71,7 @@ def build_shipwright_agent(
         max_test_attempts=settings.max_test_attempts,
         max_review_cycles=settings.max_review_cycles,
     )
+
     return create_deep_agent(
         name="shipwright",
         model=model or settings.model_strong,

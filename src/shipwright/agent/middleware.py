@@ -45,7 +45,9 @@ def is_transient_error(exc: BaseException) -> bool:
     return isinstance(exc, _TRANSIENT)
 
 
-def build_middleware(settings: Settings, audit_sink: AuditSink) -> list[AgentMiddleware]:
+def build_middleware(
+    settings: Settings, audit_sink: AuditSink
+) -> list[AgentMiddleware[Any, Any, Any]]:
     """The orchestrator's middleware, in order (deepagents adds its own around it)."""
     retry = {"max_retries": 2, "retry_on": is_transient_error, "backoff_factor": 2.0}
     return [

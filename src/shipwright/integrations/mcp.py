@@ -11,10 +11,10 @@ Tool names verified against github/github-mcp-server (remote) and mcp-atlassian 
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.sessions import Connection
 
 from shipwright.core.config import Settings
 
@@ -40,7 +40,7 @@ def _mcp_atlassian_command() -> str:
     return str(Path(sys.executable).parent / exe)
 
 
-def mcp_connections(settings: Settings) -> dict[str, dict[str, Any]]:
+def mcp_connections(settings: Settings) -> dict[str, Connection]:
     """`MultiServerMCPClient` connections: GitHub's remote server (HTTP) and mcp-atlassian."""
     return {
         "github": {

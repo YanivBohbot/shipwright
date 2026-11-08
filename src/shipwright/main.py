@@ -13,14 +13,16 @@ import re
 import sys
 import uuid
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 from langchain.agents.middleware import PIIDetectionError
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
 PREVIEW = 160
+StreamItem = tuple[tuple[str, ...], str, dict[str, Any]]
 _THREAD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")  # = the workspace thread-id rule
 
 
@@ -113,8 +115,8 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
         agent = build_shipwright_agent(
             settings, mcp_tools=mcp_tools, sandbox=sandbox, checkpointer=checkpointer, store=store
         )
-        config = {"configurable": {"thread_id": thread}}
-        stream = {"context": ShipwrightContext(user_id=user), "subgraphs": True}
+        config: RunnableConfig = {"configurable": {"thread_id": thread}}
+        context = ShipwrightContext(user_id=user)
         state = await agent.aget_state(config)
         if state.interrupts:  # a paused run of this thread (same --thread)
             print("Resuming a paused run.")
@@ -123,9 +125,11 @@ async def run_ticket(ticket: str, user: str, thread: str | None) -> None:
             run_input = {"messages": [{"role": "user", "content": f"Process Jira ticket {key}."}]}
         progress = Progress()
         while True:
-            async for namespace, mode, chunk in agent.astream(
-                run_input, config, stream_mode=["updates", "tasks"], **stream
+            async for item in agent.astream(
+                run_input, config, context=context, stream_mode=["updates", "tasks"], subgraphs=True
             ):
+                # With subgraphs=True and several modes, each item is (namespace, mode, chunk).
+                namespace, mode, chunk = cast(StreamItem, item)
                 if mode == "tasks" and "input" in chunk:
                     progress.on_task(namespace, chunk)
                 elif mode == "updates":
@@ -147,7 +151,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default_user = getpass.getuser()
     except Exception:
         default_user = "local-user"
-    parser = argparse.ArgumentParser(prog="shipwright", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="shipwright", description=(__doc__ or "").splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="Process one Jira ticket into a reviewed pull request.")
     run.add_argument("ticket", help='Ticket key, e.g. "SHIP-1".')

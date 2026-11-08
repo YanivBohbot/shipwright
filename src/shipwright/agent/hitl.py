@@ -14,12 +14,13 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from langchain.agents.middleware import InterruptOnConfig
 from langgraph.types import Command
 
 from shipwright.integrations.mcp import WRITE_TOOLS
 
-INTERRUPT_ON: dict[str, dict[str, list[str]]] = {
-    name: {"allowed_decisions": ["approve", "edit", "reject"]} for name in WRITE_TOOLS
+INTERRUPT_ON: dict[str, bool | InterruptOnConfig] = {
+    name: InterruptOnConfig(allowed_decisions=["approve", "edit", "reject"]) for name in WRITE_TOOLS
 }
 
 

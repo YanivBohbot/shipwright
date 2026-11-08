@@ -63,6 +63,8 @@ async def _langsmith_sandbox(settings: Settings, name: str) -> LangSmithSandbox:
     """Reuse the sandbox called `name` unless it failed; otherwise create it."""
     from langsmith.sandbox import SandboxClient
 
+    if settings.langsmith_api_key is None:  # Settings already refuses this; for the type checker
+        raise ValueError("SANDBOX_PROVIDER=langsmith requires LANGSMITH_API_KEY")
     client = SandboxClient(api_key=settings.langsmith_api_key.get_secret_value())
     existing = [s for s in await asyncio.to_thread(client.list_sandboxes) if s.name == name]
     sandbox = next((s for s in existing if getattr(s, "status", "ready") != "failed"), None)

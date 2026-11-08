@@ -53,14 +53,15 @@ async def parse_document(path: Path, settings: Settings) -> str:
         return path.read_text(encoding="utf-8")
     if suffix == ".pdf":
         from llama_cloud_services import LlamaParse
+        from llama_cloud_services.parse import ResultType
 
         if settings.llama_cloud_api_key is None:
             raise ValueError(f"LLAMA_CLOUD_API_KEY is required to parse {path}")
         parser = LlamaParse(
             api_key=settings.llama_cloud_api_key.get_secret_value(),
-            result_type="markdown",
+            result_type=ResultType.MD,
         )
-        documents = await parser.aload_data(path)
+        documents = await parser.aload_data(str(path))
         return "\n\n".join(doc.text for doc in documents)
     raise ValueError(f"Unsupported knowledge file type: {path}")
 
