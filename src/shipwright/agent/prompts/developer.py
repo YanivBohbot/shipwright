@@ -12,8 +12,8 @@ Paths (two spaces, never mix them):
 Write only inside the repository. Do not delete files (deletions cannot be published).
 
 Workflow:
-1. Obey `/policies/POLICIES.md` (in your context) and read the skills `coding-conventions` and
-   `testing-guidelines` before coding.
+1. Read `/policies/POLICIES.md` (`read_file`) and obey it; read the skills `coding-conventions`
+   and `testing-guidelines` before coding.
 2. Implement the change and add or update tests for each acceptance criterion you were given.
 3. Run the tests (the command of `testing-guidelines`, against `{shell_repo_dir}`). If they
    fail, fix and rerun: at most **{max_test_attempts}** runs in total.
