@@ -1,14 +1,16 @@
 """Typed application settings, read from the environment / `.env`.
 
-There is one mode: real Jira and GitHub through their MCP servers, a LangSmith sandbox for the
-code, MongoDB for threads and memory. A missing required value fails at startup with its name.
+Real Jira and GitHub through their MCP servers, MongoDB for threads and memory, and a sandbox
+for the code (`SANDBOX_PROVIDER`: local shell or LangSmith). A missing required value fails at
+startup with its name.
 """
 
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -22,10 +24,12 @@ class Settings(BaseSettings):
     model_strong: str = "openai:gpt-5.5"
     model_light: str = "openai:gpt-5.4-mini"
 
+    # Where the developer runs code: "local" (this machine, not isolated) or "langsmith".
+    sandbox_provider: Literal["local", "langsmith"] = "local"
     # LANGSMITH_API_KEY is reserved by `langgraph deploy` (not uploaded to the deployment):
-    # on a deployment, set SHIPWRIGHT_LANGSMITH_API_KEY instead. Used for the sandbox.
-    langsmith_api_key: SecretStr = Field(
-        validation_alias=AliasChoices("LANGSMITH_API_KEY", "SHIPWRIGHT_LANGSMITH_API_KEY")
+    # on a deployment, set SHIPWRIGHT_LANGSMITH_API_KEY instead.
+    langsmith_api_key: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("LANGSMITH_API_KEY", "SHIPWRIGHT_LANGSMITH_API_KEY")
     )
 
     # GitHub MCP server (remote) and the repository Shipwright works on.
@@ -55,7 +59,19 @@ class Settings(BaseSettings):
     orchestrator_model_call_limit: int = 150
     sandbox_idle_ttl_seconds: int = 3600
 
-    @field_validator("pinecone_api_key", "llama_cloud_api_key", "tavily_api_key", mode="before")
+    @model_validator(mode="after")
+    def _langsmith_sandbox_needs_a_key(self) -> "Settings":
+        if self.sandbox_provider == "langsmith" and self.langsmith_api_key is None:
+            raise ValueError("SANDBOX_PROVIDER=langsmith requires LANGSMITH_API_KEY")
+        return self
+
+    @field_validator(
+        "langsmith_api_key",
+        "pinecone_api_key",
+        "llama_cloud_api_key",
+        "tavily_api_key",
+        mode="before",
+    )
     @classmethod
     def _empty_secret_is_unset(cls, v: object) -> object:
         """`KEY=` placeholders in `.env` mean "not set" (None), never an empty credential."""

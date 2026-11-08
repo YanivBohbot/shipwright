@@ -1,4 +1,7 @@
-"""`developer`: the only agent that writes files and runs `execute` (tests) in the sandbox."""
+"""`developer`: the only agent that writes files and runs `execute` (tests) in the sandbox.
+
+File tools and `execute` may see the repo at different paths (local shell): both are given.
+"""
 
 from deepagents import SubAgent
 
@@ -8,7 +11,7 @@ from shipwright.core.config import Settings
 from shipwright.sandbox.workspace import REPO_DIR
 
 
-def build_developer(settings: Settings) -> SubAgent:
+def build_developer(settings: Settings, shell_repo_dir: str) -> SubAgent:
     return {
         "name": "developer",
         "description": (
@@ -17,7 +20,9 @@ def build_developer(settings: Settings) -> SubAgent:
             "STATUS: TESTS_PASSING or STATUS: TESTS_FAILING. Never commits or pushes."
         ),
         "system_prompt": DEVELOPER_PROMPT.format(
-            repo_dir=REPO_DIR, max_test_attempts=settings.max_test_attempts
+            repo_dir=REPO_DIR,
+            shell_repo_dir=shell_repo_dir,
+            max_test_attempts=settings.max_test_attempts,
         ),
         "model": settings.model_strong,
         "tools": [],  # no key = inherit ALL orchestrator tools (MCP writes included)

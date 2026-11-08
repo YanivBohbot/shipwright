@@ -30,3 +30,10 @@ def test_repo_format_is_checked():
 
 def test_empty_optional_secret_is_unset():
     assert make_settings(tavily_api_key="  ").tavily_api_key is None
+
+
+def test_sandbox_provider_defaults_to_local_and_langsmith_needs_a_key():
+    assert make_settings().sandbox_provider == "local"
+    assert make_settings(langsmith_api_key=None).langsmith_api_key is None
+    with pytest.raises(ValidationError, match="LANGSMITH_API_KEY"):
+        make_settings(sandbox_provider="langsmith", langsmith_api_key=None)

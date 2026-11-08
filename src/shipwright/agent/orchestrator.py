@@ -41,7 +41,7 @@ from shipwright.agent.tools.workspace_tools import build_workspace_tools
 from shipwright.audit import AuditSink, build_audit_sink
 from shipwright.core.config import Settings
 from shipwright.knowledge.search import build_searcher
-from shipwright.sandbox.workspace import REPO_DIR
+from shipwright.sandbox.workspace import REPO_DIR, shell_repo_dir
 
 
 def build_shipwright_agent(
@@ -76,7 +76,7 @@ def build_shipwright_agent(
                 settings, build_knowledge_tool(build_searcher(settings)), build_web_tool(settings)
             ),
             build_code_analyst(settings),
-            build_developer(settings),
+            build_developer(settings, shell_repo_dir(sandbox)),
             build_reviewer(settings, show_diff),
         ],
         backend=build_backend(sandbox),

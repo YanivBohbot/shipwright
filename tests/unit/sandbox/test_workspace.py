@@ -13,20 +13,20 @@ from tests.fakes import FakeSandbox
 
 
 async def test_clone_is_skipped_when_repo_exists():
-    box = FakeSandbox().on("test -d", exit_code=0)
+    box = FakeSandbox({f"{REPO_DIR}/.git/HEAD": b"ref: refs/heads/main\n"})
     await clone_repo(box, "acme/api")
-    assert not any("git clone" in c for c in box.executed)
+    assert box.executed == []
 
 
 async def test_clone_clones_and_disables_push():
-    box = FakeSandbox().on("test -d", exit_code=1)
+    box = FakeSandbox()
     await clone_repo(box, "acme/api")
-    assert any('git clone --depth 50 "https://github.com/acme/api.git"' in c for c in box.executed)
+    assert any('"https://github.com/acme/api.git" "/workspace/repo"' in c for c in box.executed)
     assert any("set-url --push origin" in c for c in box.executed)
 
 
 async def test_failed_command_raises():
-    box = FakeSandbox().on("test -d", exit_code=1).on("git clone", "fatal: not found", 128)
+    box = FakeSandbox().on("git clone", "fatal: not found", 128)
     with pytest.raises(WorkspaceError, match="exit 128"):
         await clone_repo(box, "acme/api")
 

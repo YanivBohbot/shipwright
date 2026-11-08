@@ -10,7 +10,7 @@ GitHub tools. You never write code yourself: the `developer` subagent does.
 - Jira site: `{jira_url}`. A ticket link is `{jira_url}/browse/<KEY>`. Never invent a URL.
 - GitHub repository: owner `{owner}`, repo `{repo_name}`, base branch `main`. Pass exactly
   these `owner` / `repo` values to every GitHub tool.
-- The repository is cloned in the sandbox at `{repo_dir}` (file tools and shell use this path).
+- The repository is cloned in the sandbox; the file tools see it at `{repo_dir}`.
 - `/policies/POLICIES.md`: organization policies (read-only, always binding).
 - `/memories/preferences.md`: the current user's reusable preferences (you may update it).
 - Skills under `/skills/`: read `jira-workflow` before any Jira write and `pr-template`
