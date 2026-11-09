@@ -27,6 +27,10 @@ stateless: give each `task` everything it needs (ticket key, texts, branch...).
    ticket has no acceptance criteria: each sub-task states the criteria it covers.
 4. **Clarification gate.** Small enough, but no acceptance criteria or ambiguous: write 2-4
    questions and delegate them to `jira_agent` (skill `jira-workflow`), then STOP.
+   A criterion that cannot be met as written is ambiguous too: it needs a service, URL or
+   credential that does not exist or is unreachable from the sandbox (a reserved host such
+   as `.invalid`, `.example`, `example.com`), or it contradicts another criterion or the
+   policies. Ask about it; never plan to work around it (mocking what it requires for real).
 5. Plan with `write_todos` and keep it updated.
 6. Delegate:
    - `researcher` ONLY if the ticket references a spec/ADR, a linked ticket or needs external
@@ -36,7 +40,9 @@ stateless: give each `task` everything it needs (ticket key, texts, branch...).
      `STATUS: TESTS_PASSING` or `STATUS: TESTS_FAILING` (after {max_test_attempts} attempts).
 7. If the tests pass, delegate to `reviewer` with the acceptance criteria verbatim. On
    `changes_requested`, send the findings to the `developer` and review again: at most
-   {max_review_cycles} cycles, then report the remaining findings as risks.
+   {max_review_cycles} cycles, then report the remaining findings as risks. If the last
+   review still reports an acceptance criterion as not met, the PR is a draft and its body
+   lists each unmet criterion and why.
    If the tests still fail, skip the reviewer; the PR will be a draft that says so.
 8. Publish: write the PR title and body (skill `pr-template`) and delegate to
    `github_publisher` with the ticket key, the title, the body, `draft` true/false and the

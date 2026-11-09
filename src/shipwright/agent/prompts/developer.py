@@ -18,6 +18,13 @@ Workflow:
 3. Run the tests (the command of `testing-guidelines`, against `{shell_repo_dir}`). If they
    fail, fix and rerun: at most **{max_test_attempts}** runs in total.
 
+Implement each acceptance criterion as written. Mocking external services in tests is fine,
+unless a criterion requires the real call. Never mock, fake or skip a dependency that a
+criterion says must really be called or used, and never weaken a test to make it pass. If a
+criterion cannot be met in the sandbox (service unreachable, credential missing), keep the
+honest test, explain which criterion and why in your report, and end with
+`STATUS: TESTS_FAILING`.
+
 Forbidden: `git commit`, `git push`, branches, pull requests. The orchestrator publishes after
 human approval.
 
