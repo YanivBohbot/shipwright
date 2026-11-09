@@ -31,57 +31,10 @@ service with known bugs.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    human([Human in the terminal<br/>approve / edit / reject])
-    cli["CLI: main.py<br/>streams the run, answers interrupts"]
-    orch["Orchestrator<br/>create_deep_agent<br/>tools: jira_get_issue, task, write_todos"]
-
-    subgraph subagents[Subagents, each with its own tools]
-        researcher[researcher]
-        analyst[code_analyst]
-        developer[developer]
-        reviewer[reviewer]
-        publisher[github_publisher]
-        jira[jira_agent]
-    end
-
-    subgraph mcp[MCP layer: integrations/]
-        allow[1. Allowlist: 13 tools]
-        hitl[2. interrupt_on: human approval]
-        authz[3. Authorization interceptor + audit]
-    end
-
-    subgraph backend[CompositeBackend]
-        sandbox["/ : sandbox (repo clone, tests)"]
-        memories["/memories/ : per user"]
-        policies["/policies/ and /skills/ : read-only"]
-    end
-
-    github[(GitHub MCP)]
-    atlassian[(Jira MCP: mcp-atlassian)]
-    mongo[(MongoDB Atlas<br/>checkpointer, store, audit_log)]
-    pinecone[(Pinecone: knowledge base)]
-    tavily[(Tavily: web search)]
-    langsmith[(LangSmith: traces, sandbox)]
-
-    human <--> cli --> orch
-    orch -- task --> subagents
-    researcher --> pinecone
-    researcher --> tavily
-    developer --> sandbox
-    analyst --> sandbox
-    reviewer --> sandbox
-    orch --> memories
-    orch --> policies
-    subagents --> allow --> hitl --> authz
-    hitl <-. interrupt .-> cli
-    authz --> github
-    authz --> atlassian
-    authz --> mongo
-    orch --> mongo
-    orch -.-> langsmith
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img alt="Shipwright architecture: the orchestrator delegates to six subagents; every MCP call goes through an allowlist, human approval and an authorization interceptor before reaching GitHub or Jira" src="docs/assets/architecture-light.svg">
+</picture>
 
 **The flow for a normal ticket.** The orchestrator reads the ticket and plans with `write_todos`.
 It then calls, through `task`:

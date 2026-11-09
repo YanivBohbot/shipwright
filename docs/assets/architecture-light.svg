@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="640" viewBox="0 0 1120 640">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8c959f"/></marker></defs>
+<rect x="0" y="0" width="1120" height="640" rx="16" fill="#ffffff" stroke="#ffffff" stroke-width="1"/>
+<rect x="32" y="32" width="208" height="84" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="48" y="58" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">You</text>
+<text x="82" y="58" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">in the terminal</text>
+<rect x="48" y="76" width="56" height="22" rx="11" fill="#dafbe1" stroke="#1a7f37" stroke-width="1"/>
+<text x="76" y="91" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#1a7f37" text-anchor="middle">approve</text>
+<rect x="110" y="76" width="56" height="22" rx="11" fill="#fff8c5" stroke="#bf8700" stroke-width="1"/>
+<text x="138" y="91" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#bf8700" text-anchor="middle">edit</text>
+<rect x="172" y="76" width="56" height="22" rx="11" fill="#f6f8fa" stroke="#cf222e" stroke-width="1"/>
+<text x="200" y="91" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#cf222e" text-anchor="middle">reject</text>
+<rect x="288" y="32" width="220" height="84" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="304" y="62" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">shipwright run</text>
+<text x="304" y="84" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">main.py: streams the run,</text>
+<text x="304" y="102" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">resumes paused threads</text>
+<rect x="556" y="32" width="532" height="84" rx="12" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+<text x="576" y="62" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#3730a3" text-anchor="start">Orchestrator</text>
+<text x="684" y="62" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="500" fill="#3730a3" text-anchor="start">create_deep_agent(...)</text>
+<text x="576" y="86" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">reads the ticket · plans with write_todos · delegates with task</text>
+<text x="576" y="104" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">Epic → split into Tasks · vague → questions · never runs code</text>
+<line x1="240" y1="74" x2="288" y2="74" stroke="#8c959f" stroke-width="1.6" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<line x1="508" y1="74" x2="556" y2="74" stroke="#8c959f" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="32" y="164" width="640" height="256" rx="14" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="52" y="190" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#59636e" text-anchor="start" letter-spacing="1.2">SUBAGENTS · EACH WITH ITS OWN TOOLS</text>
+<rect x="48" y="206" width="192" height="88" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="64" y="236" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">researcher</text>
+<text x="64" y="258" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">specs, ADRs, web, Jira</text>
+<rect x="256" y="206" width="192" height="88" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="272" y="236" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">code_analyst</text>
+<text x="272" y="258" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">code, commits, open PRs</text>
+<rect x="464" y="206" width="192" height="88" rx="10" fill="#eef2ff" stroke="#6366f1" stroke-width="1"/>
+<text x="480" y="236" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#3730a3" text-anchor="start">developer</text>
+<text x="480" y="258" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">edits code · runs tests</text>
+<text x="480" y="282" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500" fill="#3730a3" text-anchor="start">only agent that writes code</text>
+<rect x="48" y="310" width="192" height="88" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="64" y="340" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">reviewer</text>
+<text x="64" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">structured verdict on diff</text>
+<rect x="256" y="310" width="192" height="88" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="272" y="340" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">github_publisher</text>
+<text x="272" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">branch · push · PR</text>
+<rect x="464" y="310" width="192" height="88" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="480" y="340" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">jira_agent</text>
+<text x="480" y="362" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">comment · move · create</text>
+<line x1="614" y1="116" x2="614" y2="164" stroke="#8c959f" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="622" y="146" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="11.5" font-weight="500" fill="#59636e" text-anchor="start">task</text>
+<rect x="704" y="164" width="384" height="256" rx="14" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="724" y="190" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#59636e" text-anchor="start" letter-spacing="1.2">GUARDED MCP LAYER · EVERY CALL</text>
+<rect x="720" y="202" width="352" height="46" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<circle cx="744" cy="225" r="11" fill="#59636e"/>
+<text x="744" y="229.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<text x="764" y="222" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#1f2328" text-anchor="start">Allowlist</text>
+<text x="764" y="239" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#59636e" text-anchor="start">13 named tools, a subset per subagent</text>
+<rect x="720" y="256" width="352" height="46" rx="10" fill="#fff8c5" stroke="#bf8700" stroke-width="1"/>
+<circle cx="744" cy="279" r="11" fill="#bf8700"/>
+<text x="744" y="283.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<text x="764" y="276" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#1f2328" text-anchor="start">Human approval</text>
+<text x="764" y="293" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#59636e" text-anchor="start">every write pauses: interrupt_on</text>
+<rect x="720" y="310" width="352" height="46" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<circle cx="744" cy="333" r="11" fill="#59636e"/>
+<text x="744" y="337.5" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<text x="764" y="330" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#1f2328" text-anchor="start">Authorization + audit</text>
+<text x="764" y="347" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#59636e" text-anchor="start">repo · shipwright/* · Jira project</text>
+<rect x="720" y="368" width="172" height="38" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="734" y="392" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#1f2328" text-anchor="start">GitHub</text>
+<text x="878" y="392" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#59636e" text-anchor="end">remote MCP</text>
+<rect x="900" y="368" width="172" height="38" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="914" y="392" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#1f2328" text-anchor="start">Jira</text>
+<text x="1058" y="392" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#59636e" text-anchor="end">mcp-atlassian</text>
+<line x1="672" y1="292" x2="704" y2="292" stroke="#8c959f" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="32" y="456" width="640" height="152" rx="14" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="52" y="482" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#59636e" text-anchor="start" letter-spacing="1.2">COMPOSITEBACKEND · FILES THE AGENTS SEE</text>
+<rect x="48" y="498" width="192" height="94" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="64" y="528" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">/</text>
+<text x="64" y="550" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">sandbox: repo clone,</text>
+<text x="64" y="568" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">tests (local or LangSmith)</text>
+<rect x="256" y="498" width="192" height="94" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="272" y="528" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">/memories/</text>
+<text x="272" y="550" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">per user, persistent</text>
+<text x="272" y="568" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">(MongoDB store)</text>
+<rect x="464" y="498" width="192" height="94" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="480" y="528" font-family="ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace" font-size="15" font-weight="600" fill="#1f2328" text-anchor="start">/policies/  /skills/</text>
+<text x="480" y="550" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">POLICIES.md, SKILL.md</text>
+<text x="480" y="568" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#59636e" text-anchor="start">read-only for everyone</text>
+<line x1="352" y1="420" x2="352" y2="456" stroke="#8c959f" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="704" y="456" width="384" height="152" rx="14" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="724" y="482" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#59636e" text-anchor="start" letter-spacing="1.2">SERVICES</text>
+<rect x="720" y="498" width="172" height="30" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="732" y="518" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="start">OpenAI</text>
+<text x="880" y="518" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">models</text>
+<rect x="900" y="498" width="172" height="30" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="912" y="518" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="start">MongoDB</text>
+<text x="1060" y="518" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">state · audit</text>
+<rect x="720" y="534" width="172" height="30" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="732" y="554" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="start">Pinecone</text>
+<text x="880" y="554" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">knowledge</text>
+<rect x="900" y="534" width="172" height="30" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="912" y="554" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="start">Tavily</text>
+<text x="1060" y="554" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">web search</text>
+<rect x="720" y="570" width="172" height="30" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+<text x="732" y="590" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#1f2328" text-anchor="start">LangSmith</text>
+<text x="880" y="590" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#59636e" text-anchor="end">traces · deploy</text>
+</svg>
