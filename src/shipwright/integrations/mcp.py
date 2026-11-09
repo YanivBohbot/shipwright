@@ -23,7 +23,11 @@ from langchain_mcp_adapters.sessions import Connection
 
 from shipwright.audit import AuditSink
 from shipwright.core.config import Settings
-from shipwright.integrations.authorization import audit_interceptor, authorize_interceptor
+from shipwright.integrations.authorization import (
+    audit_interceptor,
+    authorize_interceptor,
+    drop_blank_json_args_interceptor,
+)
 
 GITHUB_TOOLS = (
     "list_branches",
@@ -113,6 +117,7 @@ async def load_mcp_tools(settings: Settings, audit_sink: AuditSink) -> dict[str,
         tool_interceptors=[
             audit_interceptor(audit_sink, write_tools),
             authorize_interceptor(settings),
+            drop_blank_json_args_interceptor(),
         ],
     )
     tools = select_tools(await client.get_tools())

@@ -10,6 +10,10 @@ outside Shipwright's scope:
 - Jira: issue keys and new issues must belong to the configured project; a search must name it.
 
 `audit_interceptor` records one `AuditEvent` per write tool call (allowed or refused).
+
+`drop_blank_json_args_interceptor` removes a blank JSON-object argument before the call:
+mcp-atlassian parses `fields` / `additional_fields` with `json.loads`, so the `""` a model
+sends for "nothing" fails the call ("not valid JSON"); omitted means the same and works.
 """
 
 import logging
@@ -95,6 +99,27 @@ def authorize_interceptor(settings: Settings) -> ToolCallInterceptor:
         return await handler(request)
 
     return authorize
+
+
+# Optional arguments mcp-atlassian parses as a JSON object (`_parse_additional_fields`).
+JSON_OBJECT_ARGS = {
+    "jira_transition_issue": ("fields",),
+    "jira_create_issue": ("additional_fields",),
+}
+
+
+def drop_blank_json_args_interceptor() -> ToolCallInterceptor:
+    async def drop_blank(request: MCPToolCallRequest, handler: Handler) -> Any:
+        names = JSON_OBJECT_ARGS.get(request.name, ())
+        blank = [
+            n for n in names if isinstance(request.args.get(n), str) and not request.args[n].strip()
+        ]
+        if blank:
+            args = {k: v for k, v in request.args.items() if k not in blank}
+            request = request.override(args=args)
+        return await handler(request)
+
+    return drop_blank
 
 
 def _preview(result: Any) -> tuple[str, str]:

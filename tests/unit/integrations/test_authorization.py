@@ -6,7 +6,11 @@ import pytest
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 from mcp.types import CallToolResult, TextContent
 
-from shipwright.integrations.authorization import audit_interceptor, authorize_interceptor
+from shipwright.integrations.authorization import (
+    audit_interceptor,
+    authorize_interceptor,
+    drop_blank_json_args_interceptor,
+)
 from tests.fakes import MemoryAuditSink, make_settings
 
 REPO = {"owner": "acme", "repo": "taskboard-api"}
@@ -128,3 +132,29 @@ async def test_a_refused_write_is_audited_as_an_error():
     )
     await audit(request, chain)
     assert sink.events[0].outcome == "error"
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "expected"),
+    [
+        # SHIP-2: the model sent fields="" and mcp-atlassian failed ("not valid JSON").
+        (
+            "jira_transition_issue",
+            {"issue_key": "SHIP-2", "transition_id": "51", "fields": "", "comment": ""},
+            {"issue_key": "SHIP-2", "transition_id": "51", "comment": ""},
+        ),
+        (
+            "jira_create_issue",
+            {"project_key": "SHIP", "summary": "s", "additional_fields": "  "},
+            {"project_key": "SHIP", "summary": "s"},
+        ),
+        (
+            "jira_transition_issue",
+            {"issue_key": "SHIP-2", "transition_id": "51", "fields": '{"resolution": "Done"}'},
+            {"issue_key": "SHIP-2", "transition_id": "51", "fields": '{"resolution": "Done"}'},
+        ),
+    ],
+)
+async def test_blank_json_object_arguments_are_dropped_before_the_call(name, args, expected):
+    _, sent = await call(name, args, "atlassian", drop_blank_json_args_interceptor())
+    assert sent[0].args == expected
