@@ -1,11 +1,26 @@
+# secrets: never commit; only .env.example (no values) is tracked
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# local tooling / caches
 .remember/
 .superpowers/
-.env
+.claude/
 .venv/
 __pycache__/
-demo/taskboard-api/
+.pytest_cache/
+.ruff_cache/
 .langgraph_api/
 tmp/
+*.log
+
+# demo target repo (published separately as <owner>/taskboard-api)
+demo/taskboard-api/
+# per-environment Jira seed output (scripts/seed_jira.py)
+demo/seeded.json
 # local-mode demo state (LocalJira / LocalGitHub)
 demo/.local_jira.json
 demo/.local_jira.tmp

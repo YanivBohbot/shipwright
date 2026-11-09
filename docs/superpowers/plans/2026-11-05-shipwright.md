@@ -103,7 +103,10 @@ Project/                                   # repo git "shipwright"
 
 ```python
 def test_settings_reads_required_fields(monkeypatch):
-    for k, v in REQUIRED_ENV.items():  # dict défini dans le test, une valeur factice par champ requis
+    for (
+        k,
+        v,
+    ) in REQUIRED_ENV.items():  # dict défini dans le test, une valeur factice par champ requis
         monkeypatch.setenv(k, v)
     s = Settings(_env_file=None)
     assert s.jira_project == "SHIP"
@@ -111,11 +114,15 @@ def test_settings_reads_required_fields(monkeypatch):
     assert s.max_test_attempts == 3 and s.max_review_cycles == 2
     assert s.github_pat.get_secret_value() == REQUIRED_ENV["GITHUB_PAT"]
 
-def test_settings_rejects_bad_repo_format(monkeypatch):
-    ...  # SHIPWRIGHT_REPO="noslash" → ValidationError
 
-def test_secrets_not_in_repr(monkeypatch):
-    ...  # repr(Settings) ne contient pas la valeur de GITHUB_PAT
+def test_settings_rejects_bad_repo_format(
+    monkeypatch,
+): ...  # SHIPWRIGHT_REPO="noslash" → ValidationError
+
+
+def test_secrets_not_in_repr(
+    monkeypatch,
+): ...  # repr(Settings) ne contient pas la valeur de GITHUB_PAT
 ```
 
 - [ ] **Step 3:** Run `uv run pytest tests/unit/test_config.py -v` → FAIL (module absent).
@@ -168,14 +175,18 @@ def test_chunk_markdown_keeps_section_path():
     assert chunks[-1].section == "Export CSV > Acceptance criteria"
     assert "AC-1" in chunks[-1].text
 
+
 async def test_ingest_directory_uses_deterministic_ids(tmp_path):
     (tmp_path / "ADR-001-error-format.md").write_text("# ADR-001\nUse problem+json\n")
-    store = FakeVectorStore()          # tests/fakes.py, enregistre add_texts(ids=…)
+    store = FakeVectorStore()  # tests/fakes.py, enregistre add_texts(ids=…)
     n = await ingest_directory(tmp_path, settings_stub(), vector_store=store)
     assert n == 1 and store.ids == ["ADR-001-error-format:0"]
 
+
 async def test_search_maps_metadata_to_chunks():
-    store = FakeVectorStore.with_docs([("AC-1 header", {"source": "s.md", "doc_id": "X", "section": "A"})])
+    store = FakeVectorStore.with_docs(
+        [("AC-1 header", {"source": "s.md", "doc_id": "X", "section": "A"})]
+    )
     [c] = await KnowledgeSearcher(store).search("header", k=1)
     assert (c.doc_id, c.section) == ("X", "A")
 ```
@@ -226,26 +237,35 @@ async def test_search_maps_metadata_to_chunks():
 ```python
 def test_parse_ticket_key_normalizes():
     assert parse_ticket_key(" ship-42 ", "SHIP") == "SHIP-42"
-    with pytest.raises(ValueError): parse_ticket_key("ship 42", "SHIP")
-    with pytest.raises(ValueError): parse_ticket_key("ABC-1", "SHIP")
+    with pytest.raises(ValueError):
+        parse_ticket_key("ship 42", "SHIP")
+    with pytest.raises(ValueError):
+        parse_ticket_key("ABC-1", "SHIP")
+
 
 def test_extract_acceptance_criteria_and_refs():
     d = "See EXPORT-CSV-v2 and ADR-001.\n## Acceptance criteria\n- [ ] AC-1 header row\n- [ ] AC-2 404 on unknown project\n"
     assert extract_acceptance_criteria(d) == ["AC-1 header row", "AC-2 404 on unknown project"]
     assert extract_spec_refs(d) == ["EXPORT-CSV-v2", "ADR-001"]
 
+
 async def test_get_issue_not_found_raises_ticket_not_found():
-    gw = McpJiraGateway(tools={"jira_get_issue": FakeTool(raises=ToolException("Issue does not exist"))})
-    with pytest.raises(TicketNotFound): await gw.get_issue("SHIP-999")
+    gw = McpJiraGateway(
+        tools={"jira_get_issue": FakeTool(raises=ToolException("Issue does not exist"))}
+    )
+    with pytest.raises(TicketNotFound):
+        await gw.get_issue("SHIP-999")
 
-async def test_transition_resolves_status_name():
-    ...  # fake jira_get_transitions → [{"id": "31", "name": "In Review"}] ; transition("SHIP-1","In Review") appelle jira_transition_issue avec transition_id="31"
 
-async def test_push_files_passes_contents():
-    ...  # FakeTool enregistre les args ; vérifier repo/branch/files/message
+async def test_transition_resolves_status_name(): ...  # fake jira_get_transitions → [{"id": "31", "name": "In Review"}] ; transition("SHIP-1","In Review") appelle jira_transition_issue avec transition_id="31"
 
-async def test_load_mcp_tools_wraps_connection_error(monkeypatch):
-    ...  # MultiServerMCPClient.get_tools lève ConnectionError → McpConnectionError dont le message contient "github" et "GITHUB_PAT"
+
+async def test_push_files_passes_contents(): ...  # FakeTool enregistre les args ; vérifier repo/branch/files/message
+
+
+async def test_load_mcp_tools_wraps_connection_error(
+    monkeypatch,
+): ...  # MultiServerMCPClient.get_tools lève ConnectionError → McpConnectionError dont le message contient "github" et "GITHUB_PAT"
 ```
 
 - [ ] **Step 2:** Run → FAIL. **Step 3:** Implémenter (+ `FakeTool` dans `tests/fakes.py`). **Step 4:** Run → PASS.
@@ -300,22 +320,34 @@ def test_parse_exit_code():
     assert parse_exit_code("4\n[Command succeeded with exit code 0]") == 0
     assert parse_exit_code("boom\n[Command failed with exit code 2]") == 2
 
-async def test_ensure_cloned_clones_once_and_uploads_skills(): ...
+
+async def test_ensure_cloned_clones_once_and_uploads_skills():
+    ...
     # 1er appel → True, commande git clone exécutée, /skills/pr-template/SKILL.md présent ; 2e appel → False
 
-async def test_changed_files_handles_added_modified_deleted(): ...
+
+async def test_changed_files_handles_added_modified_deleted():
+    ...
     # name-status M app/a.py, D app/c.py + untracked app/b.py → 3 FileChange, c.py content None
 
-async def test_changed_files_never_includes_ignored_or_cache_paths(): ...
+
+async def test_changed_files_never_includes_ignored_or_cache_paths():
+    ...
     # .pytest_cache/, __pycache__/x.pyc, .venv/ présents mais ignorés → absents du résultat
 
-async def test_diff_survives_developer_commit(): ...
+
+async def test_diff_survives_developer_commit():
+    ...
     # base_sha enregistré, puis un commit local → diff() non vide, contient le changement
+
 
 async def test_run_tests_reports_failure_tail(): ...
 
-async def test_ensure_workspace_recreates_missing_sandbox(): ...
+
+async def test_ensure_workspace_recreates_missing_sandbox():
+    ...
     # FakeSandboxClient sans sandbox du nom attendu → create_sandbox appelé avec name="shipwright-t1"
+
 
 async def test_diff_tool_reports_no_changes_and_truncates(): ...
 ```
@@ -345,14 +377,19 @@ async def test_diff_tool_reports_no_changes_and_truncates(): ...
 - [ ] **Step 1: Failing tests** (intégration réelle `create_deep_agent` sans LLM n'est pas nécessaire ; tester les backends directement avec `InMemoryStore` et un `Runtime` factice portant `context`) :
 
 ```python
-def test_memories_route_is_user_scoped(): ...
+def test_memories_route_is_user_scoped():
+    ...
     # écrire /memories/preferences.md pour user "alice", lire pour "bob" → absent
 
-def test_policies_route_is_org_scoped_and_seeded(): ...
+
+def test_policies_route_is_org_scoped_and_seeded():
+    ...
     # seed_policies puis read("/policies/POLICIES.md") contient "Forbidden paths"
+
 
 def test_permissions_deny_policy_writes():
     assert PERMISSIONS[0].mode == "deny" and "/policies/**" in PERMISSIONS[0].paths
+
 
 def test_subagent_permissions_deny_memory_writes(): ...
 ```
@@ -395,13 +432,19 @@ async def test_exclude_tools_middleware_removes_write_tools():
     seen = await run_awrap(ExcludeToolsMiddleware(READ_ONLY_EXCLUDED), req)
     assert [t.name for t in seen.tools] == ["read_file", "grep"]
 
+
 def test_subagent_specs_shape():
-    specs = {s["name"]: s for s in build_subagents(settings_stub(), knowledge_tool=t1, web_tool=t2, diff_tool=t3)}
+    specs = {
+        s["name"]: s
+        for s in build_subagents(settings_stub(), knowledge_tool=t1, web_tool=t2, diff_tool=t3)
+    }
     assert set(specs) == {"researcher", "code_analyst", "developer", "reviewer"}
     assert specs["reviewer"]["response_format"] is ReviewReport
     assert specs["developer"]["model"] == settings_stub().model_strong
-    assert not any(isinstance(m, ExcludeToolsMiddleware) for m in specs["developer"].get("middleware", []))
-    assert "3" in specs["developer"]["system_prompt"]   # max_test_attempts injecté
+    assert not any(
+        isinstance(m, ExcludeToolsMiddleware) for m in specs["developer"].get("middleware", [])
+    )
+    assert "3" in specs["developer"]["system_prompt"]  # max_test_attempts injecté
     assert all(s["permissions"] == SUBAGENT_PERMISSIONS for s in specs.values())
 ```
 
@@ -435,20 +478,25 @@ def test_subagent_specs_shape():
 - [ ] **Step 1: Failing tests** (fakes Jira/GitHub/Workspace ; pour `interrupt`, exécuter l'outil dans un petit `StateGraph` à un nœud avec `InMemorySaver`, puis reprendre avec `Command(resume=...)`) :
 
 ```python
-async def test_read_ticket_tool_reports_missing_ticket(): ...   # → "Ticket SHIP-999 not found in project SHIP."
-async def test_read_ticket_tool_flags_missing_criteria(): ...    # scénario 4 → "Acceptance criteria: NONE FOUND"
-async def test_review_gate_refuses_empty_diff(): ...             # aucun interrupt levé
-async def test_review_gate_approve_sets_hash(): ...              # state.approved_diff_hash == sha256(diff)
+async def test_read_ticket_tool_reports_missing_ticket(): ...  # → "Ticket SHIP-999 not found in project SHIP."
+async def test_read_ticket_tool_flags_missing_criteria(): ...  # scénario 4 → "Acceptance criteria: NONE FOUND"
+async def test_review_gate_refuses_empty_diff(): ...  # aucun interrupt levé
+async def test_review_gate_approve_sets_hash(): ...  # state.approved_diff_hash == sha256(diff)
 async def test_review_gate_feedback_clears_hash_and_relays_message(): ...
-async def test_publish_refuses_without_approval(): ...           # FakeGitHub.prs == []
+async def test_publish_refuses_without_approval(): ...  # FakeGitHub.prs == []
 async def test_publish_refuses_when_diff_changed_after_approval(): ...
 async def test_publish_creates_branch_files_changelog_and_pr():
     ...
     assert gh.branches == [("owner/taskboard-api", "shipwright/ship-2", "main")]
     assert "CHANGELOG.md" in [f.path for f in gh.pushes[0].files]
     assert gh.prs[0].title.startswith("[SHIP-2] ") and "SHIP-2" in gh.prs[0].body
-async def test_publish_reuses_existing_branch_and_pr(): ...
+
+
+async def test_publish_reuses_existing_branch_and_pr():
+    ...
     # FakeGitHub(existing_branches={"shipwright/ship-2"}, open_prs={"shipwright/ship-2": URL}) → pas de create_branch, pr_updates == [URL], retourne URL
+
+
 async def test_update_jira_ticket_comment_and_transition(): ...
 ```
 
