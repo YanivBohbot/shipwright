@@ -28,3 +28,19 @@ def test_developer_never_fakes_what_a_criterion_requires():
     prompt = flat(DEVELOPER_PROMPT)
     assert "Never mock, fake or skip a dependency that a criterion says must really be" in prompt
     assert "STATUS: TESTS_FAILING" in prompt
+
+
+# SHIP-3 (AC-3: "the pull request description cites the documentation sources"): the reviewer
+# only sees the diff, marked it unmet twice, and the unmet-criterion rule would draft the PR.
+
+
+def test_reviewer_does_not_fail_criteria_about_the_pr_itself():
+    from shipwright.agent.prompts.reviewer import REVIEWER_PROMPT
+
+    assert "about the pull request itself" in flat(REVIEWER_PROMPT)
+
+
+def test_criteria_about_the_pr_itself_do_not_make_it_a_draft():
+    prompt = flat(ORCHESTRATOR_PROMPT)
+    assert "about the pull request itself" in prompt
+    assert "never make it a draft" in prompt

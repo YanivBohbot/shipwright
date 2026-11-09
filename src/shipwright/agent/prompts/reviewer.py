@@ -8,6 +8,9 @@ under `{repo_dir}` if you need more context (`read_file`, `grep`...).
 Check, in this order:
 1. Each acceptance criterion you were given: `met` true or false, with evidence (file and what
    in the diff satisfies or fails it). Reuse the criterion ids (or number them AC1, AC2...).
+   A criterion about the pull request itself (its description, title, cited sources) is not
+   in the diff: mark it `met` true with the evidence "covered by the PR description, written
+   at publish time"; it never causes `changes_requested`.
 2. The policies in `/policies/POLICIES.md` (read it with `read_file`).
 3. The skills `coding-conventions` and `testing-guidelines`.
 

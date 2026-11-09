@@ -68,6 +68,28 @@ def tests_green(run: Any, example: Any) -> dict[str, Any]:
 tests_green.__test__ = False  # name starts with "tests_": keep pytest from collecting it
 
 
+# The tool that shows a subagent did its job: at least one of them must be called.
+KEY_TOOLS: dict[str, frozenset[str]] = {
+    "researcher": frozenset({"knowledge_search", "web_search", "jira_search"}),
+    "code_analyst": frozenset({"read_file", "grep", "glob", "search_code", "list_commits"}),
+    "developer": frozenset({"execute"}),  # it ran the tests
+    "reviewer": frozenset({"show_workspace_diff"}),  # it looked at the actual diff
+    "github_publisher": frozenset({"get_changed_files"}),  # files come from the sandbox
+}
+
+
+def subagent_tools(run: Any, example: Any) -> dict[str, Any]:
+    """Fraction of the called subagents (with a known key tool) that used their key tool."""
+    used: dict[str, list[str]] = _outputs(run).get("subagent_tools") or {}
+    judged = {name: tools for name, tools in used.items() if name in KEY_TOOLS}
+    if not judged:
+        return {"key": "subagent_tools", "score": None, "comment": "n/a"}
+    missing = sorted(n for n, tools in judged.items() if not KEY_TOOLS[n] & set(tools))
+    score = (len(judged) - len(missing)) / len(judged)
+    comment = f"missing key tool: {missing}" if missing else "every subagent used its key tool"
+    return {"key": "subagent_tools", "score": score, "comment": comment}
+
+
 # ------------------------------------------------------------------ LLM judge
 
 JUDGE_RUBRIC = """\

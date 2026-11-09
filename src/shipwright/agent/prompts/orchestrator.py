@@ -42,7 +42,9 @@ stateless: give each `task` everything it needs (ticket key, texts, branch...).
    `changes_requested`, send the findings to the `developer` and review again: at most
    {max_review_cycles} cycles, then report the remaining findings as risks. If the last
    review still reports an acceptance criterion as not met, the PR is a draft and its body
-   lists each unmet criterion and why.
+   lists each unmet criterion and why. A criterion about the pull request itself (its
+   description, cited sources...) is yours to satisfy in the PR body: it can never make it a
+   draft.
    If the tests still fail, skip the reviewer; the PR will be a draft that says so.
 8. Publish: write the PR title and body (skill `pr-template`) and delegate to
    `github_publisher` with the ticket key, the title, the body, `draft` true/false and the
