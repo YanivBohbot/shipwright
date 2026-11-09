@@ -29,34 +29,6 @@ every file has one job and a docstring naming the concept it demonstrates.
 [`YanivBohbot/taskboard-api`](https://github.com/YanivBohbot/taskboard-api), a small FastAPI
 service with known bugs.
 
-## Status
-
-Active branch: **`refactor/mcp-native`** (all Jira/GitHub access is native MCP). Unit tests: 137
-passing, ruff and pyright clean.
-
-Validated end to end, with real Jira, GitHub, OpenAI and MongoDB:
-- **SHIP-1** (bug: empty assignee → HTTP 500): fixed, tested, reviewed,
-  [PR #1](https://github.com/YanivBohbot/taskboard-api/pull/1) opened, Jira comment posted,
-  ticket moved to *In Review*. Every write is traced in the MongoDB audit log.
-- **SHIP-4** (ambiguous): stops at the clarification gate, questions posted, no code.
-- **SHIP-7** (Epic): split into 5 Tasks (SHIP-8 to SHIP-12) plus a comment, no code.
-- Smoke test of the 7 subagents against the real services: 7/7.
-
-In progress:
-- **SHIP-2**: real-world check of the `push_files` guard (the pushed files must equal the
-  sandbox's changed files, paths and contents).
-- **SHIP-5**: red tests → draft PR.
-- LangSmith Deployment (`langgraph.json`, `docs/deployment.md`), evals in LangSmith.
-
-### Branches
-
-| Branch | Content |
-|---|---|
-| `main` | design spec and implementation plan |
-| `feat/shipwright` | first implementation (16-task plan) |
-| `refactor/simplify` | restructuring around `agent/` (one module per Deep Agents component) |
-| `refactor/mcp-native` | **current**: MCP tools straight to the agent, per-subagent tools, authorization interceptors |
-
 ## Architecture
 
 ```mermaid
